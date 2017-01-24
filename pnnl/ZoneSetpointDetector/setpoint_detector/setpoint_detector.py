@@ -25,7 +25,7 @@ fs = 3000
 
 utils.setup_logging()
 _log = logging.getLogger(__name__)
-__version__ = "0.2.0"
+__version__ = '1.0.0'
 
 __author1__ = 'Woohyun Kim <woohyun.kim@pnnl.gov>'
 __author2__ = 'Robert Lutes <robert.lutes@pnnl.gov>'
@@ -221,7 +221,7 @@ class SetPointDetector(Agent):
                                                  path='',
                                                  point='all')
 
-        required_data = [self.fanstatus_name, self.zone_temperature]
+        self.required_data = [self.fanstatus_name, self.zone_temperature]
         self.minimum_data_count = config.get('minimum_data_count', 5)
         self.area_distribution_threshold = config.get('area_distribution_threshold', 0.1)
         self.debug = config.get('debug_flag', False)
@@ -235,6 +235,7 @@ class SetPointDetector(Agent):
         self.number = 0
         self.startup = True
         self.available = []
+        self.timeseries_deviation_threshold = config.get('timeseries_deviation_threshold', 0.5)
 
     def initialize(self):
         self.zone_temperature_array = np.empty(0)
@@ -254,7 +255,7 @@ class SetPointDetector(Agent):
     def check_data_requirements(self, available):
         """Minimum data requirement is zone temperature and supply fan status.
         """
-        avail_required_data = [item for item in required_data if item in available]
+        avail_required_data = [item for item in self.required_data if item in available]
 
         if self.zone_temperature in avail_required_data and self.fanstatus_name in avail_required_data:
             self.available = available
@@ -326,39 +327,33 @@ class SetPointDetector(Agent):
         set_points = []
         number_groups = int(ceil(self.current_stpt_array.size)) - self.minimum_data_count  if self.current_stpt_array.size > self.minimum_data_count else 1
         if number_groups == 1:
-            current_stpt = [self.timestamp_array[0], self.timestamp_array[-1], np.average(self.current_stpt_array)]
+            current_stpt = [self.current_timestamp_array[0], self.current_timestamp_array[-1], np.average(self.current_stpt_array)]
             set_points.append(current_stpt)
         else:
             for grouper in range(number_groups):
                 current = self.current_stpt_array[(0+incrementer):(self.minimum_data_count+incrementer+index)]
                 next_group = self.current_stpt_array[(1+grouper):(self.minimum_data_count+grouper+1)]
                 _log.info('Current {}'.format(current))
-                _log.info('Current {}'.format(next_group))
-        if np.std(next_group) < 0.4:
-            area = self.determine_distribution_area(current, next_group)
-            _log.info('distribution area {}'.format(area))
-            if area < self.area_distribution_threshold:
-                incrementer += 1
-                current_stpt = [self.timestamp_array[0+incrementer],
-                                self.timestamp_array[self.minimum_data_count+incrementer+index],
-                                np.average(current)]
-                if np.std(current_stpt) < 0.4:
-                    set_points.append(current_stpt)
-                if grouper < number_groups - 1:
-                    last_stpt = [self.timestamp_array[1+grouper],
-                                 self.timestamp_array[self.minimum_data_count+grouper+1],
-                                 np.average(next_group)]
-            else:
-                index += 1
-                if grouper == number_groups - 1:
-                    current = self.current_stpt_array[(0+incrementer):(self.minimum_data_count+grouper+1)]
-                    current_stpt = [self.timestamp_array[0+incrementer],
-                                    self.timestamp_array[self.minimum_data_count+grouper+1],
-                                    np.average(current)]
-            if np.std(current_stpt) < 0.4:
-                set_points.append(current_stpt)
-        _log.debug('SETPOINT ARRAY: {}'.format(set_points))
-        if self.debug and plotter_found:
+                _log.info('next {}'.format(next_group))
+                area = self.determine_distribution_area(current, next_group)
+                _log.info('distribution area {}'.format(area))
+                if area < self.area_distribution_threshold:
+                    incrementer += 1
+                    current_stpt = [self.current_timestamp_array[0+incrementer], self.current_timestamp_array[self.minimum_data_count+incrementer+index], np.average(current)]
+                    if np.std(current) < self.timeseries_deviation_threshold:
+                        set_points.append(current_stpt)
+                    if grouper < number_groups- 1:
+                        last_stpt = [self.current_timestamp_array[1+grouper], self.current_timestamp_array[self.minimum_data_count+grouper+1], np.average(next_group)]
+                        if np.std(next_group) < self.timeseries_deviation_threshold:
+                            set_points.append(last_stpt)
+                else:
+                    index += 1
+                    if grouper == number_groups - 1:
+                        current = self.current_stpt_array[(0+incrementer):(self.minimum_data_count+grouper+1)]
+                        current_stpt = [self.current_timestamp_array[0+incrementer], self.current_timestamp_array[self.minimum_data_count + grouper], np.average(current)]
+                        set_points.append(current_stpt)
+        _log.debug('Set Point Array: {}'.format(set_points))
+        if self.debug:
             plt.close()
         return set_points
 
@@ -386,7 +381,7 @@ class SetPointDetector(Agent):
             std1 = np.std(next_ts)
         intersections = find_intersections(m1, m2, std1, std2)
         area = calculate_area()
-        if self.debug and plotter_found and self.debug_directory is not None:
+        if self.debug_directory is not None and self.debug and plotter_found:
             self.plot_dist_area(m1, std1, m2, std2, self.timestamp_array[0].date(), area, current_max)
         return area
 
