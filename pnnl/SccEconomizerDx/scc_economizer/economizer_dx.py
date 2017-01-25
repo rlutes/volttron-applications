@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*- {{{
 # vim: set fenc=utf-8 ft=python sw=4 ts=4 sts=4 et:
 """
-Copyright (c) 2015, Battelle Memorial Institute
+Copyright (c) 2017, Battelle Memorial Institute
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -87,6 +87,7 @@ class SccEconomizerDx(Agent):
         device_path = dict((key, config[key])
                            for key in ['campus', 'building', 'unit'])
         units = config.get('Temperature Units', 'temp_f')
+        self.data_consistency_threshold = config.get('self.data_consistency_threshold', 3.0)
         if units == "F":
             units = "temp_f"
         if units == "C":
@@ -187,7 +188,7 @@ class SccEconomizerDx(Agent):
         self.heat_name = self.commands.get('HeatingCommand', None)
 
     def initialize_dataset(self):
-        '''Reinitialize data for next operational mode'''
+        """Reinitialize data for next operational mode"""
         self._validate_oat = []
         self.mat_arr = []
         self.oat_arr = []
@@ -197,6 +198,16 @@ class SccEconomizerDx(Agent):
         self.mode_op_time = []
         self.previous_mode = None
         return
+
+    def data_consistency_check(self):
+        oat_std = np.std(self.oat_arr)
+        mat_std = np.std(self.mat_arr)
+        rat_std = np.std(self.rat_arr)
+        if self.oad_arr:
+            oad_std = np.std(self.oad_arr)
+        else:
+            oad_std = 0.0
+        return max(oat_std, mat_std, rat_std, oad_std) < self.data_consistency_threshold
 
     @Core.receiver('onsetup')
     def setup(self, sender, **kwargs):
@@ -215,7 +226,7 @@ class SccEconomizerDx(Agent):
                      
     @Core.periodic(900)
     def weather_request(self):
-        '''Request weather data for device location'''
+        """Request weather data for device location"""
         # TODO: add check to verify agent is running use subprocess.call()
         if self.config_error:
             return
@@ -234,10 +245,10 @@ class SccEconomizerDx(Agent):
         self.validate(data)
 
     def validate(self, ws_oat):
-        '''
+        """
         check averaged oat from building sensor with
         oat reading from weather station (WeatherUnderground)
-        '''
+        """
         avg_oat = np.mean(self._validate_oat)
         self._validate_oat = []
         if abs(avg_oat - ws_oat) > (self.oat_sensor_threshold):
@@ -253,10 +264,10 @@ class SccEconomizerDx(Agent):
         return False
 
     def on_new_data(self, peer, sender, bus, topic, headers, message):
-        '''Subscribe to device data from message bus and determine mode
+        """Subscribe to device data from message bus and determine mode
 
         of operation.  When mode changes call economizer diagnostic.
-        '''
+        """
         if self.config_error:
             _log.info('Error when reading configuration file.')
             return
@@ -265,7 +276,7 @@ class SccEconomizerDx(Agent):
             data[key.lower()] = value
 
         if not int(data[self.fan_status_name]):
-            _log.info('UNIT IS OFF.')
+            _log.info('The unit is off, data will be ommitted from analysis.')
             return
 
         current_time = parser.parse(headers.get('Date'))
@@ -287,7 +298,7 @@ class SccEconomizerDx(Agent):
 
         if cur_oat > self.oat_high or cur_oat < self.oat_low:
             _log.info('Outdoor air temperature is outside high/low'
-                      'bounds for diagnostic.'+' at ' + str(current_time))
+                      'bounds for diagnostic at {}.'.format(current_time))
             return
 
         if abs(cur_oat - cur_rat) < self.temp_threshold:
@@ -375,29 +386,30 @@ class SccEconomizerDx(Agent):
         elif self.mode_op_time:
             if self.mode_op_time[-1] - self.mode_op_time[0] >= td(minutes=self.min_dx_time):
                 _log.debug('Running Diagnostics algorithms.')
-                temp_dx = self.temp_sensor_dx()
-                result = {SENSOR_DX: temp_dx}
-                if temp_dx > 0:
-                    _log.debug('Problem detected during temperature at timestamp: {}'.format(current_time))
+                if self.data_consistency_check():
+                    temp_dx = self.temp_sensor_dx()
+                    result = {SENSOR_DX: temp_dx}
+                    if temp_dx > 0:
+                        _log.debug('Problem detected during temperature at timestamp: {}'.format(current_time))
 
-                self.temp_fault = True
-                if current_mode == 1 or current_mode == 2:
-                    econ_dx1 = self.economizer_damper_dx1(current_mode)
-                    result.update({ECON1: econ_dx1})
-                if current_mode == 0 or current_mode == 3:
-                    econ_dx2 = self.economizer_damper_dx2(current_mode)
-                    result.update({ECON2: econ_dx2})
-                econ_dx3 = self.ventilation_dx(current_mode)
-                result.update({VENTILATION_DX: econ_dx3})
-                _log.debug('Current result dict: {}'.format(result))
+                    self.temp_fault = True
+                    if current_mode == 1 or current_mode == 2:
+                        econ_dx1 = self.economizer_damper_dx1(current_mode)
+                        result.update({ECON1: econ_dx1})
+                    if current_mode == 0 or current_mode == 3:
+                        econ_dx2 = self.economizer_damper_dx2(current_mode)
+                        result.update({ECON2: econ_dx2})
+                    econ_dx3 = self.ventilation_dx(current_mode)
+                    result.update({VENTILATION_DX: econ_dx3})
+                    _log.debug('Current result dict: {}'.format(result))
         self.initialize_dataset()
 
     def proactive_sensor_dx(self):
-        '''Add proactive temperature sensor method.'''
+        """Add proactive temperature sensor method."""
         return 0.0
 
     def temp_sensor_dx(self):
-        '''
+        """
         Diagnostic to detect problems with temperature sensor used
         for control of packaged rooftop air-conditioners (RTUs) or
         air-handlers (AHUs).
@@ -409,7 +421,7 @@ class SccEconomizerDx(Agent):
 
         Data collection pre-requisite:  The AHU or RTU has not been
         mechanically cooling or heating for at least five minutes.
-        '''
+        """
         mat_oat_diff = np.mean(
             [mat - oat for mat, oat in zip(self.mat_arr, self.oat_arr)])
         mat_rat_diff = np.mean(
@@ -429,7 +441,7 @@ class SccEconomizerDx(Agent):
         return 0
 
     def economizer_damper_dx1(self, mode):
-        '''
+        """
         Diagnostic to detect problems with the outside-air damper being
         near the minimum position, when unit is in a cooling mode and
         outside conditions are favorable for economization.
@@ -451,7 +463,7 @@ class SccEconomizerDx(Agent):
 
                 compressor command is "OFF"
                 heating call (command) is "OFF"
-        '''
+        """
         rat_mat_diff = np.mean(
             [rat - mat for mat, rat in zip(self.mat_arr, self.rat_arr)])
         oat_mat_diff = np.mean(
@@ -507,7 +519,7 @@ class SccEconomizerDx(Agent):
         return 10
 
     def economizer_damper_dx2(self, mode):
-        '''
+        """
         Diagnostic to detect problems with the outside-air damper being
         stuck near the fully open position, not allowing unit to take
         advantage of cool outside air when conditions permit economization.
@@ -531,11 +543,11 @@ class SccEconomizerDx(Agent):
 
                 compressor command is "OFF"
                 heating call (command) is "OFF"
-        '''
+        """
         rat_mat_diff = np.mean(
-            [rat - mat for mat, rat in zip(self.mat_arr, self.rat_arr)])
+            [abs(rat - mat) for mat, rat in zip(self.mat_arr, self.rat_arr)])
         oat_mat_diff = np.mean(
-            [mat - oat for mat, oat in zip(self.mat_arr, self.oat_arr)])
+            [abs(mat - oat) for mat, oat in zip(self.mat_arr, self.oat_arr)])
         oad_avg = np.mean(self.oad_arr) if self.oad_arr else None
         if self.temp_fault or (self.mat_missing and mode == 3):
             if oad_avg is None:
@@ -579,43 +591,52 @@ class SccEconomizerDx(Agent):
         return 20
 
     def ventilation_dx(self, current_mode):
-        '''
-            Diagnostic to detect ventilation problems.
+        """
+        Diagnostic to detect ventilation problems.
 
-            user_configurable: self.temp_threshold
+        user_configurable: self.temp_threshold
 
-            Data collection pre-requisite:
+        Data collection pre-requisite:
 
-            1.  There is not a call for cooling from the space(s) served by the
-                RTU/AHU or there is a call for cooling from space(s) but
-                conditions are not favorable for economization.
-                    cooling call is "OFF" or economizing is "OFF"
+        1.  There is not a call for cooling from the space(s) served by the
+            RTU/AHU or there is a call for cooling from space(s) but
+            conditions are not favorable for economization.
+                cooling call is "OFF" or economizing is "OFF"
 
-            2.  IF the DAT is used for the diagnostic (rather than the MAT)
-                then the  AHU or RTU must not have been mechanically cooling
-                or heating for at least five minutes:
+        2.  IF the DAT is used for the diagnostic (rather than the MAT)
+            then the  AHU or RTU must not have been mechanically cooling
+            or heating for at least five minutes:
 
-                    compressor command is "OFF"
-                    heating call (command) is "OFF"
-        '''
+                compressor command is "OFF"
+                heating call (command) is "OFF"
+        """
+        if self.temp_fault:
+            _log.debug('Ventilation dx: temperature sensor fault detected.  Cannot determine OAF.')
+            return 37
+
         oaf = [(m - r) / (o - r) for o, r, m in zip(self.oat_arr, self.rat_arr, self.mat_arr)]
         oaf = [item if (item < 1.25 and item > 0) else 0 for item in oaf]
+
         if not oaf:
-            _log.debug('OAF calculation resulted in unexpected value.')
+            _log.debug('Ventilation dx:  OAF calculation resulted in unexpected value.')
             return 31
+
         oaf_pr = np.mean(oaf)*100.0
+
         if current_mode == 0 or current_mode == 3:
             if oaf_pr > self.min_oad * (1.0 + (1.0 - self.sensitivity/2)):
-                _log.debug('RTU is bringing in excess OA when OAD should be at the minimum position.')
+                _log.debug('Ventilation dx:  RTU is bringing in excess OA when OAD should be at the minimum position.')
                 return 32
+
         if oaf_pr < self.min_oad/(3.0 - self.sensitivity):
-            _log.debug('RTU is brining in insufficient ventilation.')
+            _log.debug('Ventilation dx:  RTU is brining in insufficient ventilation.')
             return 33
-        _log.debug('RTU is meeting ventilation requirements.')
+
+        _log.debug('Ventilation dx:  RTU is meeting ventilation requirements.')
         return 30
 
 def main():
-    '''Main method'''
+    """Main method"""
     utils.vip_main(SccEconomizerDx)
 
 
@@ -625,3 +646,4 @@ if __name__ == '__main__':
         sys.exit(main())
     except KeyboardInterrupt:
         pass
+
