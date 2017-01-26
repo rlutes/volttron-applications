@@ -203,11 +203,8 @@ class SccEconomizerDx(Agent):
         oat_std = np.std(self.oat_arr)
         mat_std = np.std(self.mat_arr)
         rat_std = np.std(self.rat_arr)
-        if self.oad_arr:
-            oad_std = np.std(self.oad_arr)
-        else:
-            oad_std = 0.0
-        return max(oat_std, mat_std, rat_std, oad_std) < self.data_consistency_threshold
+        
+        return max(mat_std, rat_std, oad_std) < self.data_consistency_threshold
 
     @Core.receiver('onsetup')
     def setup(self, sender, **kwargs):
@@ -387,12 +384,8 @@ class SccEconomizerDx(Agent):
             if self.mode_op_time[-1] - self.mode_op_time[0] >= td(minutes=self.min_dx_time):
                 _log.debug('Running Diagnostics algorithms.')
                 if self.data_consistency_check():
-                    temp_dx = self.temp_sensor_dx()
-                    result = {SENSOR_DX: temp_dx}
-                    if temp_dx > 0:
-                        _log.debug('Problem detected during temperature at timestamp: {}'.format(current_time))
-
-                    self.temp_fault = True
+                    self.temp_fault = self.temp_sensor_dx()
+                    result = {SENSOR_DX: self.temp_fault}
                     if current_mode == 1 or current_mode == 2:
                         econ_dx1 = self.economizer_damper_dx1(current_mode)
                         result.update({ECON1: econ_dx1})
@@ -479,7 +472,7 @@ class SccEconomizerDx(Agent):
                            'commanded to the minimum position.')
                 return 16
 
-        if oat_mat_diff - rat_mat_diff > self.temp_threshold:
+        if oat_mat_diff > rat_mat_diff:
             if oad_avg is not None and oad_avg > self.min_oad:
                 _log.debug('The OAD is commanded open '
                            'but data indicates the damper may '
