@@ -266,11 +266,6 @@ class CurtailmentSetting(object):
 
     def ingest_data(self, data):
         pass
-        # if self.offset is not None:
-            # base = data[self.point]
-            # self.value = base + self.offset
-            # _log.debug('Setting offest value for curtail: Base value: {}, '
-                       # 'Offset: {}, New value: {}'.format(base, self.offset, self.value))
 
     def get_curtailment_dict(self):
         return {'point': self.point,
@@ -762,9 +757,9 @@ def ilc_agent(config_path, **kwargs):
                 _log.debug('Next confirm: {}'.format(self.next_curtail_confirm))
                 if current_time >= self.next_curtail_confirm and (self.devices_curtailed or stagger_off_time):
                     self.curtail_confirm(self.average_power, current_time)
-                    _log.debug('now: {} ------- Next Curtail Confirm: {}'.format(current_time, self.next_curtail_confirm))
+                    _log.debug('Current time: {} ------- Next Curtail Confirm: {}'.format(current_time, self.next_curtail_confirm))
                 if current_time >= self.curtail_end:
-                    _log.debug('Running stagger tracking method')
+                    _log.debug('Running end curtail method')
                     self.end_curtail(current_time)
                 return
 
@@ -786,12 +781,11 @@ def ilc_agent(config_path, **kwargs):
             if bldg_power > demand_limit:
                 _log.info('Current load ({load}) exceeds limit or {limit}.'
                           .format(load=bldg_power, limit=demand_limit))
-                self.device_group_size = None
                 score_order = clusters.get_score_order()
                 if not score_order:
                     _log.info('All devices are off, nothing to curtail.')
                     return
-
+                self.device_group_size = None
                 scored_devices = self.actuator_request(score_order)
                 self.curtail(scored_devices, bldg_power, now)
 
@@ -838,7 +832,6 @@ def ilc_agent(config_path, **kwargs):
                     curtailed_value = value + curtail['offset']
                 else:
                     curtailed_value = curtail_value
-                # TODO: remove offset from curtailment manager
                 _log.debug('Setting '+curtailed_point+' to '+str(curtailed_value))
 
                 try:
