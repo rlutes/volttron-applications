@@ -392,33 +392,33 @@ class Device(object):
         self.expr = {}
         self.condition = {}
         
-        for subdevice, cluster_config in device_config.items():
+        for token, cluster_config in device_config.items():
             device_status = cluster_config.pop('device_status')
             device_status_args = device_status['device_status_args']
-            self.device_status_args[subdevice] = device_status_args
+            self.device_status_args[token] = device_status_args
             condition = device_status['condition']
-            self.condition[subdevice] = condition
-            self.points[subdevice] = symbols(device_status_args)
-            self.expr[subdevice] = parse_expr(condition) 
+            self.condition[token] = condition
+            self.points[token] = symbols(device_status_args)
+            self.expr[token] = parse_expr(condition) 
         
-        for command_point, criteria_config in device_config.items():
+        for token, criteria_config in device_config.items():
             criteria = Criteria(criteria_config)
-            self.criteria[command_point] = criteria
-            self.command_status[command_point] = False
+            self.criteria[token] = criteria
+            self.command_status[token] = False
 
     def ingest_data(self, time_stamp, data):
         for criteria in self.criteria.values():
             criteria.ingest_data(time_stamp, data)
 
-        for command in self.command_status:
+        for token in self.command_status:
             pt_list = []
-            for item in self.device_status_args[command]:
+            for item in self.device_status_args[token]:
                 pt_list.append((item, data[item]))
             val = False
             if pt_list:
-                val = self.expr[command].subs(pt_list)
-            _log.debug('{} evaluated to {}'.format(self.condition[command], val))
-            self.command_status[command] = bool(val)
+                val = self.expr[token].subs(pt_list)
+            _log.debug('{} evaluated to {}'.format(self.condition[token], val))
+            self.command_status[token] = bool(val)
 
     def reset_curtail_count(self):
         for criteria in self.criteria.values():
@@ -428,14 +428,14 @@ class Device(object):
         for criteria in self.criteria.values():
             criteria.reset_currently_curtailed()
 
-    def increment_curtail(self, command):
-        self.criteria[command].increment_curtail()
+    def increment_curtail(self, token):
+        self.criteria[token].increment_curtail()
 
-    def evaluate(self, command):
-        return self.criteria[command].evaluate()
+    def evaluate(self, token):
+        return self.criteria[token].evaluate()
 
-    def get_curtailment(self, command):
-        return self.criteria[command].get_curtailment()
+    def get_curtailment(self, token):
+        return self.criteria[token].get_curtailment()
 
     def get_on_commands(self):
         return [command for command, state in self.command_status.iteritems() if state]
@@ -454,9 +454,9 @@ class DeviceCluster(object):
     def get_all_device_evaluations(self):
         results = {}
         for name, device in self.devices.iteritems():
-            for command in device.get_on_commands():
-                evaluations = device.evaluate(command)
-                results[name, command] = evaluations
+            for token in device.get_on_commands():
+                evaluations = device.evaluate(token)
+                results[name, token] = evaluations
         return results
 
 
@@ -731,7 +731,7 @@ def ilc_agent(config_path, **kwargs):
             str_now = format_timestamp(current_time)
             _log.debug('Reported time: ' + str_now + ' data count: {}  / power array count {}'.format(self.power_data_count, len(self.bldg_power)))
             _log.debug('Current instantaneous power: {}'.format(current_power))
-            _log.debug('Current standard 30 minute average power: {}'.format(normal_average_power))
+            _log.debug('Current standard {} minute average power: {}'.format(int(self.power_data_count), normal_average_power))
             _log.debug('Current simple smoothing load: {}'.format(self.average_power))
             _log.debug('Current smoothing {} and window load: {}'.format(smoothing_constant, window_power))
             _log_csv = [str_now, current_power, normal_average_power, self.average_power, smoothing_constant, window_power]
@@ -754,10 +754,9 @@ def ilc_agent(config_path, **kwargs):
                     clusters.reset_curtail_count()
 
             if self.running_ahp:
-                _log.debug('Next confirm: {}'.format(self.next_curtail_confirm))
                 if current_time >= self.next_curtail_confirm and (self.devices_curtailed or stagger_off_time):
                     self.curtail_confirm(self.average_power, current_time)
-                    _log.debug('Current time: {} ------- Next Curtail Confirm: {}'.format(current_time, self.next_curtail_confirm))
+                    _log.debug('Current reported time: {} ------- Next Curtail Confirm: {}'.format(current_time, self.next_curtail_confirm))
                 if current_time >= self.curtail_end:
                     _log.debug('Running end curtail method')
                     self.end_curtail(current_time)
@@ -817,9 +816,9 @@ def ilc_agent(config_path, **kwargs):
 
             for item in remaining_devices:
 
-                device_name, command = item
+                device_name, token = item
 
-                curtail = clusters.get_device(device_name).get_curtailment(command)
+                curtail = clusters.get_device(device_name).get_curtailment(token)
                 curtail_pt = curtail['point']
                 curtail_load = curtail['load']
                 current_offset = curtail['offset']
@@ -846,8 +845,8 @@ def ilc_agent(config_path, **kwargs):
                     continue
 
                 est_curtailed += curtail_load
-                clusters.get_device(device_name).increment_curtail(command)
-                self.devices_curtailed.append([device_name, command, value, revert_priority])
+                clusters.get_device(device_name).increment_curtail(token)
+                self.devices_curtailed.append([device_name, token, value, revert_priority])
 
                 if est_curtailed >= need_curtailed:
                     break
