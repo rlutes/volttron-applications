@@ -528,6 +528,8 @@ def ilc_agent(config_path, **kwargs):
 
     for cluster_config in cluster_configs:
         criteria_file_name = cluster_config['critieria_file_path']
+        if criteria_file_name[0] == '~':
+            criteria_file_name = os.path.expanduser(criteria_file_name)
         cluster_config_file_name = cluster_config['device_file_path']
         cluster_priority = cluster_config['cluster_priority']
 
@@ -541,6 +543,8 @@ def ilc_agent(config_path, **kwargs):
             _log.info('Inconsistent criteria matrix. Check configuration '
                       'in ' + criteria_file_name)
             sys.exit()
+        if cluster_config_file_name[0] == '~':
+            cluster_config_file_name = os.path.expanduser(cluster_config_file_name)
         cluster_config = utils.load_config(cluster_config_file_name)
         device_cluster = DeviceCluster(cluster_priority, crit_labels, row_average, cluster_config)
 
@@ -679,10 +683,8 @@ def ilc_agent(config_path, **kwargs):
 
             # topic of form:  devices/campus/building/device
             device_name = device_topic_map[topic]
-
             data = message[0]
             now = parser.parse(headers['Date'])
-
             clusters.get_device(device_name).ingest_data(now, data)
 
         def load_message_handler(self, peer, sender, bus, topic, headers, message):
@@ -690,84 +692,80 @@ def ilc_agent(config_path, **kwargs):
             building demand over a configurable time and manages the curtailment
             time and curtailment break times.
             '''
-            if self.kill_signal_recieved:
-                return
+            try:
+                if self.kill_signal_recieved:
+                    return
 
-            _log.debug('Reading building power data.')
-            current_power = float(message[0][power_point])
-            current_time = parser.parse(headers['Date'])
+                _log.debug('Reading building power data.')
+                current_power = float(message[0][power_point])
+                current_time = parser.parse(headers['Date'])
 
-            if self.bldg_power:
-                current_average_window = (self.bldg_power[-1][0] - self.bldg_power[0][0]) + td(minutes=1.125)
-            else:
-                current_average_window = td(minutes=0.125)
+                if self.bldg_power:
+                    current_average_window = (self.bldg_power[-1][0] - self.bldg_power[0][0])
+                else:
+                    current_average_window = td(minutes=0)
 
-            _log.debug('TIME VALUES {} : {}'.format(current_average_window, average_building_power_window))
+                _log.debug('TIME VALUES {} : {}'.format(current_average_window, average_building_power_window))
 
-            if current_average_window >= average_building_power_window and current_power > 0:
-                self.bldg_power.append((current_time, current_power))
-                self.bldg_power.pop(0)
-            elif current_power > 0:
-                self.bldg_power.append((current_time, current_power))
-                self.power_data_count += 1.0
+                if current_average_window >= average_building_power_window and current_power > 0:
+                    self.bldg_power.append((current_time, current_power))
+                    self.bldg_power.pop(0)
+                elif current_power > 0:
+                    self.bldg_power.append((current_time, current_power))
+                    self.power_data_count += 1.0
 
-            smoothing_constant = 2.2756*self.power_data_count**(-0.718) if self.power_data_count > 0 else 1.0
-            alpha_smoothing = 0.125
-            window_power = 0
-            power_sort = list(self.bldg_power)
-            power_sort.sort(reverse=True)
+                alpha_smoothing = 0.125
+                power_sort = list(self.bldg_power).sort(reverse=True)
 
-            for n in xrange(len(self.bldg_power)):
-                window_power += power_sort[n][1] * smoothing_constant * (1.0 - smoothing_constant) ** n
-            window_power = window_power if window_power > 0.0 else 0.0
+                if self.average_power is None:
+                    self.average_power = current_power
 
-            if self.average_power is None:
-                self.average_power = current_power
+                self.average_power = self.average_power * (1 - alpha_smoothing) + current_power * alpha_smoothing
+                norm_list = [float(i[1]) for i in self.bldg_power]
+                normal_average_power = mean(norm_list) if norm_list else 0.0
 
-            self.average_power = self.average_power*(1-alpha_smoothing) + current_power*alpha_smoothing
-            norm_list = [float(i[1]) for i in self.bldg_power]
-            normal_average_power = mean(norm_list) if norm_list else 0.0
+                str_now = format_timestamp(current_time)
+                _log.debug('Reported time: ' + str_now + ' data count: {}  / power array count {}'.format(self.power_data_count, len(self.bldg_power)))
+                _log.debug('Current instantaneous power: {}'.format(current_power))
+                _log.debug('Current standard {} minute average power: {}'.format(int(self.power_data_count), normal_average_power))
+                _log.debug('Current simple smoothing load: {}'.format(self.average_power))
+                _log_csv = [str_now, current_power, normal_average_power, self.average_power]
 
-            str_now = format_timestamp(current_time)
-            _log.debug('Reported time: ' + str_now + ' data count: {}  / power array count {}'.format(self.power_data_count, len(self.bldg_power)))
-            _log.debug('Current instantaneous power: {}'.format(current_power))
-            _log.debug('Current standard {} minute average power: {}'.format(int(self.power_data_count), normal_average_power))
-            _log.debug('Current simple smoothing load: {}'.format(self.average_power))
-            _log.debug('Current smoothing {} and window load: {}'.format(smoothing_constant, window_power))
-            _log_csv = [str_now, current_power, normal_average_power, self.average_power, smoothing_constant, window_power]
-
-            if not os.path.isfile('./power_log.csv'):
-                _header = ['ts', 'instantaneous power', 'Normal Average', 'Simple Exponential Smoothing',
-                           'Smoothing Constant', 'Fifteen Minute Exponential Smoothing']
-                myfile = open('./power_log.csv', 'wb')
-                wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
-                wr.writerow(_header)
+                if not os.path.isfile('./power_log.csv'):
+                    _header = ['ts', 'instantaneous power', 'Normal Average', 'Fifteen Minute Exponential Smoothing']
+                    myfile = open('./power_log.csv', 'wb')
+                    wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
+                    wr.writerow(_header)
+                    myfile.close()
+                myfile = open('./power_log.csv', 'a+')
+                wr = csv.writer(myfile, quoting=csv.QUOTE_NONE)
+                wr.writerow(_log_csv)
                 myfile.close()
-            myfile = open('./power_log.csv', 'a+')
-            wr = csv.writer(myfile, quoting=csv.QUOTE_NONE)
-            wr.writerow(_log_csv)
-            myfile.close()
 
-            if self.reset_curtail_count_time is not None:
-                if self.reset_curtail_count_time <= current_time:
-                    _log.debug('Resetting curtail count')
-                    clusters.reset_curtail_count()
+                if self.reset_curtail_count_time is not None:
+                    if self.reset_curtail_count_time <= current_time:
+                        _log.debug('Resetting curtail count')
+                        clusters.reset_curtail_count()
 
-            if self.running_ahp:
-                if current_time >= self.next_curtail_confirm and (self.devices_curtailed or stagger_off_time):
-                    self.curtail_confirm(self.average_power, current_time)
-                    _log.debug('Current reported time: {} ------- Next Curtail Confirm: {}'.format(current_time, self.next_curtail_confirm))
-                if current_time >= self.curtail_end:
-                    _log.debug('Running end curtail method')
-                    self.end_curtail(current_time)
-                return
+                if self.running_ahp:
+                    if current_time >= self.next_curtail_confirm and (self.devices_curtailed or stagger_off_time):
+                        self.curtail_confirm(self.average_power, current_time)
+                        _log.debug('Current reported time: {} ------- Next Curtail Confirm: {}'.format(current_time, self.next_curtail_confirm))
+                    if current_time >= self.curtail_end:
+                        _log.debug('Running end curtail method')
+                        self.end_curtail(current_time)
+                    return
 
-            if self.break_end is not None and current_time < self.break_end:
-                _log.debug('Break ends: {}'.format(self.break_end))
-                return
-            #if len(self.bldg_power) < 5:
-                # return
-            self.check_load(self.average_power, current_time)
+                if self.break_end is not None and current_time < self.break_end:
+                    _log.debug('Break ends: {}'.format(self.break_end))
+                    return
+
+                if len(self.bldg_power) < 5:
+                    return
+
+                self.check_load(self.average_power, current_time)
+            finally:
+                self.vip.pubsub.publish('pubsub', 'applications/ilc/advance', headers={},message={})
 
         def check_load(self, bldg_power, now):
             '''Check whole building power and if the value is above the
@@ -807,13 +805,12 @@ def ilc_agent(config_path, **kwargs):
                 _log.debug('Everything available has already been curtailed')
                 return
 
-            self.break_end = now+ curtail_time + curtail_break
+            self.break_end = now + curtail_time + curtail_break
             self.curtail_end = now + curtail_time
             self.reset_curtail_count_time = self.curtail_end + reset_curtail_count_time
             self.next_curtail_confirm = now + curtail_confirm
 
             _log.info('Curtialing load.')
-
             for item in remaining_devices:
 
                 device_name, token = item
@@ -827,10 +824,12 @@ def ilc_agent(config_path, **kwargs):
 
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
                 value = self.vip.rpc.call('platform.actuator', 'get_point', curtailed_point).get(timeout=5)
+
                 if current_offset is not None:
                     curtailed_value = value + curtail['offset']
                 else:
                     curtailed_value = curtail_value
+                # TODO: remove offset from curtailment manager
                 _log.debug('Setting '+curtailed_point+' to '+str(curtailed_value))
 
                 try:
@@ -843,15 +842,12 @@ def ilc_agent(config_path, **kwargs):
                     _log.warning('Failed to set {} to {}: {}'
                                  .format(curtailed_point, curtailed_value, str(ex)))
                     continue
-
                 est_curtailed += curtail_load
                 clusters.get_device(device_name).increment_curtail(token)
                 self.devices_curtailed.append([device_name, token, value, revert_priority])
 
                 if est_curtailed >= need_curtailed:
-                    break
-
-            return
+                    break 
 
         def curtail_confirm(self, cur_pwr, now):
             '''Check if load shed has been met.  If the demand goal is not
@@ -877,7 +873,7 @@ def ilc_agent(config_path, **kwargs):
 
             for item in score_order:
 
-                device, point = item
+                device, token = item
 
                 _log.debug('Reserving device: ' + device)
 
@@ -912,6 +908,7 @@ def ilc_agent(config_path, **kwargs):
 
         def end_curtail(self, _now):
             _log.info('Stagger release: {}'.format(stagger_release))
+
             if stagger_release:
                 _log.info('Stagger release enabled.')
 
@@ -931,7 +928,6 @@ def ilc_agent(config_path, **kwargs):
                 if _now >= self.break_end:
                     _log.debug('Release all in contingency.')
                     self.reinit_stagger(reset_all=True)
-
                 return
 
             self.device_group_size = len(self.devices_curtailed)
@@ -942,8 +938,7 @@ def ilc_agent(config_path, **kwargs):
             current_devices_curtailed = deepcopy(self.devices_curtailed)
             index_counter = 0
             if reset_all:
-                self.device_group_size = len(self.devices_curtailed)
-
+                self.device_group_size = len(self.devices_curtailed)  
             for item in xrange(self.device_group_size):
                 if item >= len(self.devices_curtailed):
                     break
@@ -974,7 +969,6 @@ def ilc_agent(config_path, **kwargs):
                     _log.warning('Failed to revert point {} (RemoteError): {}'
                                  .format(curtailed_point, str(ex)))
                     continue
-
             self.devices_curtailed = current_devices_curtailed
      
         def get_revert_value(self, device_name, revert_priority, revert_val):
@@ -988,6 +982,7 @@ def ilc_agent(config_path, **kwargs):
 
             if len(current_device_list) <= 1:
                 return None
+
             index_value = min(current_device_list, key=lambda t: t[3])
             return_value = deepcopy(index_value[2])
             _log.debug('Calculated revert value: {}'.format(return_value))
@@ -1037,7 +1032,6 @@ if __name__ == '__main__':
         sys.exit(main())
     except KeyboardInterrupt:
         pass
-
 
 
 
