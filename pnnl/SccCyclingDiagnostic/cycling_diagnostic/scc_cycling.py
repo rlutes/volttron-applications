@@ -117,7 +117,7 @@ def align_pv(zone_temperature_array, peak_ind, val_ind, dtime):
 
 
 
-def detect_peaks(data, mph=None, threshold=0.2, mpd=1, edge='rising',
+def detect_peaks(data, mph=None, threshold=0, mpd=1, edge='rising',
                  kpsh=False, valley=False, ax=None):
     '''
     Detect peaks in data based on their amplitude and other features.
