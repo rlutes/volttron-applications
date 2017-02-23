@@ -366,35 +366,36 @@ class SccEconomizerDx(Agent):
             return
 
         _log.debug('Operating Mode: {} ---- For timestamp: {}.'.format(current_mode, current_time))
-        if (self.previous_mode == current_mode or self.previous_mode is None) and (not self.mode_op_time or (self.mode_op_time[-1] - self.mode_op_time[0] < td(minutes=self.min_dx_time))):
+        operating_conditionals = self.previous_mode == current_mode or self.previous_mode is None
+        time_conditionals = =[self.mode_op_time, self.mode_op_time[-1] - self.mode_op_time[0] < td(minutes=self.min_dx_time)]
+        if operating_conditionals and (not time_conditionals[0] or time_conditionals[1]):
             self.steady_state.append(current_time)
             if self.steady_state[-1] - self.steady_state[0] < td(minutes=self.steady_time):
                 return
-            _log.debug('Steady state conditions reached at: {}.'.format(current_time))
             self.previous_mode = current_mode
             self.oat_arr.append(cur_oat)
             self._validate_oat.append(cur_oat)
             self.mat_arr.append(cur_mat)
             self.rat_arr.append(cur_rat)
             self.mode_op_time.append(current_time)
+            _log.debug('Steady state conditions reached at: {}.'.format(self.mode_op_time[0]))
             if cur_oad is not None:
                 self.oad_arr.append(float(data.get(self.oad_name)))
             return
-        elif self.mode_op_time:
-            if self.mode_op_time[-1] - self.mode_op_time[0] >= td(minutes=self.min_dx_time):
-                _log.debug('Running Diagnostics algorithms.')
-                if self.data_consistency_check():
-                    self.temp_fault = self.temp_sensor_dx()
-                    result = {SENSOR_DX: self.temp_fault}
-                    if current_mode == 1 or current_mode == 2:
-                        econ_dx1 = self.economizer_damper_dx1(current_mode)
-                        result.update({ECON1: econ_dx1})
-                    if current_mode == 0 or current_mode == 3:
-                        econ_dx2 = self.economizer_damper_dx2(current_mode)
-                        result.update({ECON2: econ_dx2})
-                    econ_dx3 = self.ventilation_dx(current_mode)
-                    result.update({VENTILATION_DX: econ_dx3})
-                    _log.debug('Current result dict: {}'.format(result))
+        elif time_conditionals[0] and not time_conditionals[1]:
+            _log.debug('Running Diagnostics algorithms.')
+            if self.data_consistency_check():
+                self.temp_fault = self.temp_sensor_dx()
+                result = {SENSOR_DX: self.temp_fault}
+                if current_mode == 1 or current_mode == 2:
+                    econ_dx1 = self.economizer_damper_dx1(current_mode)
+                    result.update({ECON1: econ_dx1})
+                if current_mode == 0 or current_mode == 3:
+                    econ_dx2 = self.economizer_damper_dx2(current_mode)
+                    result.update({ECON2: econ_dx2})
+                econ_dx3 = self.ventilation_dx(current_mode)
+                result.update({VENTILATION_DX: econ_dx3})
+                _log.debug('Current result dict: {}'.format(result))
         self.initialize_dataset()
 
     def proactive_sensor_dx(self):
@@ -464,13 +465,15 @@ class SccEconomizerDx(Agent):
         oat_avg = np.mean(self.oat_arr)
         oad_avg = np.mean(self.oad_arr) if self.oad_arr else None
 
-        if self.temp_fault or oat_avg < 50 and (self.mat_missing and mode == 1):
-            if oad_avg is None:
-                return 17
-            if oad_avg <= self.min_oad:
-                _log.debug('Data indicates that the OAD is incorrectly '
-                           'commanded to the minimum position.')
-                return 16
+        if self.temp_fault or oat_avg < 50 or (self.mat_missing and mode == 1):
+            if oad_avg is not None:
+                if oad_avg <= self.min_oad:
+                    _log.debug('Data indicates that the OAD is incorrectly '
+                               'commanded to the minimum position.')
+                    return 16
+                else:
+                    return 10
+            return 17
 
         if oat_mat_diff > rat_mat_diff:
             if oad_avg is not None and oad_avg > self.min_oad:
@@ -543,13 +546,15 @@ class SccEconomizerDx(Agent):
             [abs(mat - oat) for mat, oat in zip(self.mat_arr, self.oat_arr)])
         oad_avg = np.mean(self.oad_arr) if self.oad_arr else None
         if self.temp_fault or (self.mat_missing and mode == 3):
-            if oad_avg is None:
-                return 27
-            if oad_avg - self.min_oad > 10.0:
-                _log.debug('Data indicates that the OAD is incorrectly '
-                           'commanded significantly above the minimum '
-                           'position.')
-                return 26
+            if oad_avg is not None:
+                if oad_avg - self.min_oad > 10.0:
+                    _log.debug('Data indicates that the OAD is incorrectly '
+                               'commanded significantly above the minimum '
+                               'position.')
+                    return 26
+                else:
+                    return 20
+            return 27
 
         if rat_mat_diff > oat_mat_diff:
             if oad_avg is not None and oad_avg - self.min_oad < 10.0:
