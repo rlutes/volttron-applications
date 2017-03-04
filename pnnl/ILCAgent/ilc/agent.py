@@ -701,7 +701,7 @@ def ilc_agent(config_path, **kwargs):
             device_token = device_cluster.devices[device_name].criteria.keys()[0]
             curtail = clusters.get_device(device_name).get_curtailment(device_token)
             curtail_pt = curtail['point']
-            device_update_topic = update_base_topic + curtail_pt
+            device_update_topic = update_base_topic + device_name + "/" + curtail_pt
             
             previous_value = data[curtail_pt]
             control_time = None
