@@ -511,11 +511,18 @@ def ilc_agent(config_path, **kwargs):
     Analytical Hierarchical Process (AHP).
     '''
     config = utils.load_config(config_path)
+    application_category = config.get('application_category')
+    application_name = config.get('application_name')
     location = {}
-    location['campus'] = config.get('campus')
-    location['building'] = config.get('building')
+    location['campus'] = campus = config.get('campus')
+    location['building'] = building = config.get('building')
     cluster_configs = config['clusters']
     agent_id = config.get('agent_id')
+    update_base_topic = "analysis/{}/".format(agent_id)
+    if campus is not None and campus:
+        update_base_topic = update_base_topic + campus + "/"
+    if building is not None and building:
+        update_base_topic = update_base_topic + building + "/"
 
     global mappers
 
@@ -684,9 +691,51 @@ def ilc_agent(config_path, **kwargs):
             # topic of form:  devices/campus/building/device
             device_name = device_topic_map[topic]
             data = message[0]
+            meta = message[1]
             now = parser.parse(headers['Date'])
+            str_now = str(format_timestamp(now))
             clusters.get_device(device_name).ingest_data(now, data)
+            self.create_device_status_publish(str_now, device_name, data, topic, meta)
 
+        def create_device_status_publish(self, str_time, device_name, data, topic, meta):
+            device_token = device_cluster.devices[device_name].criteria.keys()[0]
+            curtail = clusters.get_device(device_name).get_curtailment(device_token)
+            curtail_pt = curtail['point']
+            device_update_topic = update_base_topic + curtail_pt
+            
+            previous_value = data[curtail_pt]
+            control_time = None
+            device_state = "Inactive"
+            for item in self.devices_curtailed:
+                if device_name == item[0]:
+                    previous_value = item[2]
+                    control_time = item[4]
+                    device_state = "Active"
+                    
+            headers = {
+                "Date": str_time, "min_compatible_version": "3.0",
+                "ApplicationCategory": application_category,
+                "ApplicationName": application_name, 
+                "MessageType": "Control", "TimeStamp": str_time
+            }
+                      
+            device_message = [
+                {
+                    "DeviceState": device_state,
+                    "PreviousValue": previous_value,
+                    "TimeChanged": control_time
+                }, 
+                {
+                    "PreviousValue": meta[curtail_pt],
+                    "TimeChanged": {"tz": meta[curtail_pt]["tz"], "type": "datetime"},
+                    "DeviceState": {"tz": meta[curtail_pt]["tz"], "type": "string"}
+                }
+            ]
+            self.vip.pubsub.publish('pubsub', 
+                                    device_update_topic, 
+                                    headers=headers, 
+                                    message=device_message).get(timeout=4.0)
+            
         def load_message_handler(self, peer, sender, bus, topic, headers, message):
             '''Call back method for building power meter. Calculates the average
             building demand over a configurable time and manages the curtailment
@@ -749,7 +798,7 @@ def ilc_agent(config_path, **kwargs):
 
                 if self.running_ahp:
                     if current_time >= self.next_curtail_confirm and (self.devices_curtailed or stagger_off_time):
-                        self.curtail_confirm(self.average_power, current_time)
+                        self.curtail_confirm(self.average_power, current_time, headers["Date"])
                         _log.debug('Current reported time: {} ------- Next Curtail Confirm: {}'.format(current_time, self.next_curtail_confirm))
                     if current_time >= self.curtail_end:
                         _log.debug('Running end curtail method')
@@ -763,7 +812,7 @@ def ilc_agent(config_path, **kwargs):
                 if len(self.bldg_power) < 5:
                     return
 
-                self.check_load(self.average_power, current_time)
+                self.check_load(self.average_power, current_time, headers["Date"])
             finally:
                 self.vip.pubsub.publish('pubsub', 'applications/ilc/advance', headers={},message={})
 
@@ -844,7 +893,7 @@ def ilc_agent(config_path, **kwargs):
                     continue
                 est_curtailed += curtail_load
                 clusters.get_device(device_name).increment_curtail(token)
-                self.devices_curtailed.append([device_name, token, value, revert_priority])
+                self.devices_curtailed.append([device_name, token, value, revert_priority, str(format_timestamp(now))])
 
                 if est_curtailed >= need_curtailed:
                     break 
@@ -943,7 +992,7 @@ def ilc_agent(config_path, **kwargs):
                 if item >= len(self.devices_curtailed):
                     break
 
-                device_name, command, revert_val, revert_priority = self.devices_curtailed[item]
+                device_name, command, revert_val, revert_priority, modified_time = self.devices_curtailed[item]
                 curtail = clusters.get_device(device_name).get_curtailment(command)
                 curtail_pt = curtail['point']
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
