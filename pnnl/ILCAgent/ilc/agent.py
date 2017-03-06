@@ -449,14 +449,14 @@ class DeviceCluster(object):
         self.row_average = row_average
 
         for device_name, device_config in cluster_config.iteritems():
-            self.devices[device_name] = Device(device_config)
+            self.devices[device_name, actuator] = Device(device_config)
 
     def get_all_device_evaluations(self):
         results = {}
         for name, device in self.devices.iteritems():
             for token in device.get_on_commands():
                 evaluations = device.evaluate(token)
-                results[name, token] = evaluations
+                results[name[0], token, actuator[1]] = evaluations
         return results
 
 
@@ -539,6 +539,7 @@ def ilc_agent(config_path, **kwargs):
             criteria_file_name = os.path.expanduser(criteria_file_name)
         cluster_config_file_name = cluster_config['device_file_path']
         cluster_priority = cluster_config['cluster_priority']
+        cluster_actuator = cluster_config.get('cluster_actuator', 'platform.actuator')
 
         crit_labels, criteria_arr = extract_criteria(criteria_file_name)
         col_sums = calc_column_sums(criteria_arr)
@@ -553,7 +554,7 @@ def ilc_agent(config_path, **kwargs):
         if cluster_config_file_name[0] == '~':
             cluster_config_file_name = os.path.expanduser(cluster_config_file_name)
         cluster_config = utils.load_config(cluster_config_file_name)
-        device_cluster = DeviceCluster(cluster_priority, crit_labels, row_average, cluster_config)
+        device_cluster = DeviceCluster(cluster_priority, crit_labels, row_average, cluster_config, cluster_actuator)
 
         _log.debug('Crit Labels: ' + str(crit_labels))
         clusters.add_device_cluster(device_cluster)
@@ -798,7 +799,7 @@ def ilc_agent(config_path, **kwargs):
 
                 if self.running_ahp:
                     if current_time >= self.next_curtail_confirm and (self.devices_curtailed or stagger_off_time):
-                        self.curtail_confirm(self.average_power, current_time, headers["Date"])
+                        self.curtail_confirm(self.average_power, current_time)
                         _log.debug('Current reported time: {} ------- Next Curtail Confirm: {}'.format(current_time, self.next_curtail_confirm))
                     if current_time >= self.curtail_end:
                         _log.debug('Running end curtail method')
@@ -812,7 +813,7 @@ def ilc_agent(config_path, **kwargs):
                 if len(self.bldg_power) < 5:
                     return
 
-                self.check_load(self.average_power, current_time, headers["Date"])
+                self.check_load(self.average_power, current_time)
             finally:
                 self.vip.pubsub.publish('pubsub', 'applications/ilc/advance', headers={},message={})
 
@@ -862,7 +863,7 @@ def ilc_agent(config_path, **kwargs):
             _log.info('Curtialing load.')
             for item in remaining_devices:
 
-                device_name, token = item
+                device_name, token, device_actuator = item
 
                 curtail = clusters.get_device(device_name).get_curtailment(token)
                 curtail_pt = curtail['point']
@@ -872,7 +873,7 @@ def ilc_agent(config_path, **kwargs):
                 revert_priority = curtail['revert_priority']
 
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
-                value = self.vip.rpc.call('platform.actuator', 'get_point', curtailed_point).get(timeout=5)
+                value = self.vip.rpc.call(device_actuator, 'get_point', curtailed_point).get(timeout=5)
 
                 if current_offset is not None:
                     curtailed_value = value + curtail['offset']
@@ -884,7 +885,7 @@ def ilc_agent(config_path, **kwargs):
                 try:
                     if self.kill_signal_recieved:
                         break
-                    result = self.vip.rpc.call('platform.actuator', 'set_point',
+                    result = self.vip.rpc.call(device_actuator, 'set_point',
                                                agent_id, curtailed_point,
                                                curtailed_value).get(timeout=5)
                 except RemoteError as ex:
@@ -893,7 +894,7 @@ def ilc_agent(config_path, **kwargs):
                     continue
                 est_curtailed += curtail_load
                 clusters.get_device(device_name).increment_curtail(token)
-                self.devices_curtailed.append([device_name, token, value, revert_priority, str(format_timestamp(now))])
+                self.devices_curtailed.append([device_name, token, value, revert_priority, str(format_timestamp(now)), device_actuator])
 
                 if est_curtailed >= need_curtailed:
                     break 
@@ -918,11 +919,11 @@ def ilc_agent(config_path, **kwargs):
             str_end = format_timestamp(_end)
             ctrl_dev = []
 
-            already_handled = dict((device, True) for device in self.scheduled_devices)
+            already_handled = dict((device[0], True) for device in self.scheduled_devices)
 
             for item in score_order:
 
-                device, token = item
+                device, token, device_actuator = item
 
                 _log.debug('Reserving device: ' + device)
 
@@ -938,7 +939,7 @@ def ilc_agent(config_path, **kwargs):
                     if self.kill_signal_recieved:
                         break
                     result = self.vip.rpc.call(
-                        'platform.actuator', 'request_new_schedule', agent_id,
+                        device_actuator, 'request_new_schedule', agent_id,
                         device, 'HIGH', schedule_request).get(timeout=5)
                 except RemoteError as ex:
                     _log.warning('Failed to schedule device {} (RemoteError): {}'
@@ -950,7 +951,7 @@ def ilc_agent(config_path, **kwargs):
                     already_handled[device] = False
                 else:
                     already_handled[device] = True
-                    self.scheduled_devices.add(device)
+                    self.scheduled_devices.add(device, device_actuator)
                     ctrl_dev.append(item)
 
             return ctrl_dev
@@ -992,7 +993,7 @@ def ilc_agent(config_path, **kwargs):
                 if item >= len(self.devices_curtailed):
                     break
 
-                device_name, command, revert_val, revert_priority, modified_time = self.devices_curtailed[item]
+                device_name, command, revert_val, revert_priority, modified_time, device_actuator = self.devices_curtailed[item]
                 curtail = clusters.get_device(device_name).get_curtailment(command)
                 curtail_pt = curtail['point']
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
@@ -1000,12 +1001,12 @@ def ilc_agent(config_path, **kwargs):
                 _log.debug('Returned revert value: {}'.format(revert_value))
                 try:
                     if revert_value is not None:
-                        result = self.vip.rpc.call('platform.actuator', 'set_point',
+                        result = self.vip.rpc.call(device_actuator, 'set_point',
                                                    agent_id, curtailed_point,
                                                    revert_value).get(timeout=5)
                         _log.debug('Reverted point: {} --------- value: {}'.format(curtailed_point, revert_value))
                     else:
-                        result = self.vip.rpc.call('platform.actuator', 'revert_point',
+                        result = self.vip.rpc.call(device_actuator, 'revert_point',
                                                    agent_id, curtailed_point).get(timeout=5)
                         _log.debug('Reverted point: {} - Result: {}'.format(curtailed_point, result))
                     if current_devices_curtailed:
@@ -1055,8 +1056,8 @@ def ilc_agent(config_path, **kwargs):
         def release_devices(self):
             for device in self.scheduled_devices:
                 result = self.vip.rpc.call(
-                    'platform.actuator', 'request_cancel_schedule', agent_id,
-                    device).get(timeout=10)
+                    device[1], 'request_cancel_schedule', agent_id,
+                    device[0]).get(timeout=10)
             self.scheduled_devices = set()
 
         def reinit_stagger(self, reset_all=False):
