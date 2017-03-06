@@ -442,7 +442,7 @@ class Device(object):
 
 
 class DeviceCluster(object):
-    def __init__(self, priority, crit_labels, row_average, cluster_config):
+    def __init__(self, priority, crit_labels, row_average, cluster_config, actuator):
         self.devices = {}
         self.priority = priority
         self.crit_labels = crit_labels
