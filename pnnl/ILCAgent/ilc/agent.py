@@ -456,7 +456,7 @@ class DeviceCluster(object):
         for name, device in self.devices.iteritems():
             for token in device.get_on_commands():
                 evaluations = device.evaluate(token)
-                results[name[0], token, actuator[1]] = evaluations
+                results[name[0], token, name[1]] = evaluations
         return results
 
 
@@ -469,7 +469,7 @@ class Clusters(object):
         self.clusters.append(cluster)
         self.devices.update(cluster.devices)
 
-    def get_device_name_list(self):
+    def get_device_name_list(self): 
         return self.devices.keys()
 
     def get_device(self, device_name):
@@ -507,7 +507,6 @@ class Clusters(object):
 
 def ilc_agent(config_path, **kwargs):
     '''Intelligent Load Curtailment (ILC) Application using
-
     Analytical Hierarchical Process (AHP).
     '''
     config = utils.load_config(config_path)
@@ -578,7 +577,7 @@ def ilc_agent(config_path, **kwargs):
     for device_name in all_devices:
         device_topic = topics.DEVICES_VALUE(campus=config.get('campus', ''),
                                             building=config.get('building', ''),
-                                            unit=device_name,
+                                            unit=device_name[0],
                                             path='',
                                             point='all')
         device_topic_list.append(device_topic)
@@ -667,7 +666,6 @@ def ilc_agent(config_path, **kwargs):
         def handle_agent_kill(self, peer, sender, bus, topic, headers, message):
             '''
             Locally implemented override for ILC application.
-
             When an override is detected the ILC application will return
             operations for all units to normal.
             '''
@@ -699,10 +697,11 @@ def ilc_agent(config_path, **kwargs):
             self.create_device_status_publish(str_now, device_name, data, topic, meta)
 
         def create_device_status_publish(self, str_time, device_name, data, topic, meta):
+            _log.debug('WOBAH: {}'.format(device_name))
             device_token = device_cluster.devices[device_name].criteria.keys()[0]
             curtail = clusters.get_device(device_name).get_curtailment(device_token)
             curtail_pt = curtail['point']
-            device_update_topic = update_base_topic + device_name + "/" + curtail_pt
+            device_update_topic = update_base_topic + device_name[0] + "/" + curtail_pt
             
             previous_value = data[curtail_pt]
             control_time = None
@@ -743,8 +742,8 @@ def ilc_agent(config_path, **kwargs):
             time and curtailment break times.
             '''
             try:
-                if self.kill_signal_recieved:
-                    return
+                #if self.kill_signal_recieved:
+                    #return
 
                 _log.debug('Reading building power data.')
                 current_power = float(message[0][power_point])
@@ -819,7 +818,6 @@ def ilc_agent(config_path, **kwargs):
 
         def check_load(self, bldg_power, now):
             '''Check whole building power and if the value is above the
-
             the demand limit (demand_limit) then initiate the ILC (AHP)
             sequence.
             '''
@@ -865,7 +863,7 @@ def ilc_agent(config_path, **kwargs):
 
                 device_name, token, device_actuator = item
 
-                curtail = clusters.get_device(device_name).get_curtailment(token)
+                curtail = clusters.get_device((device_name, device_actuator)).get_curtailment(token)
                 curtail_pt = curtail['point']
                 curtail_load = curtail['load']
                 current_offset = curtail['offset']
@@ -893,7 +891,7 @@ def ilc_agent(config_path, **kwargs):
                                  .format(curtailed_point, curtailed_value, str(ex)))
                     continue
                 est_curtailed += curtail_load
-                clusters.get_device(device_name).increment_curtail(token)
+                clusters.get_device((device_name, device_actuator)).increment_curtail(token)
                 self.devices_curtailed.append([device_name, token, value, revert_priority, str(format_timestamp(now)), device_actuator])
 
                 if est_curtailed >= need_curtailed:
@@ -901,7 +899,6 @@ def ilc_agent(config_path, **kwargs):
 
         def curtail_confirm(self, cur_pwr, now):
             '''Check if load shed has been met.  If the demand goal is not
-
             met and there are additional devices to curtail then the ILC will shed
             additional load by curtailing more devices.
             '''
@@ -951,7 +948,7 @@ def ilc_agent(config_path, **kwargs):
                     already_handled[device] = False
                 else:
                     already_handled[device] = True
-                    self.scheduled_devices.add(device, device_actuator)
+                    self.scheduled_devices.add((device, device_actuator))
                     ctrl_dev.append(item)
 
             return ctrl_dev
@@ -994,7 +991,7 @@ def ilc_agent(config_path, **kwargs):
                     break
 
                 device_name, command, revert_val, revert_priority, modified_time, device_actuator = self.devices_curtailed[item]
-                curtail = clusters.get_device(device_name).get_curtailment(command)
+                curtail = clusters.get_device((device_name, device_actuator)).get_curtailment(command)
                 curtail_pt = curtail['point']
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
                 revert_value = self.get_revert_value(device_name, revert_priority, revert_val)
@@ -1082,6 +1079,4 @@ if __name__ == '__main__':
         sys.exit(main())
     except KeyboardInterrupt:
         pass
-
-
 
