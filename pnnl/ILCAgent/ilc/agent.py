@@ -839,9 +839,8 @@ def ilc_agent(config_path, **kwargs):
             need_curtailed = bldg_power - demand_limit
             est_curtailed = 0.0
             remaining_devices = scored_devices[:]
-
             for device in self.devices_curtailed:
-                current_tuple = (device[0], device[1])
+                current_tuple = (device[0], device[1], device[5])
                 if current_tuple in remaining_devices:
                     remaining_devices.remove(current_tuple)
 
