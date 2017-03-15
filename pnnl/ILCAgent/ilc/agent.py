@@ -259,7 +259,6 @@ class CurtailmentSetting(object):
         if None in (point, value, load):
             raise ValueError('Missing parameter')
         self.point = point
-        self.load = load
         self.value = value
         self.offset = offset
         self.revert_priority = revert_priority
@@ -268,6 +267,13 @@ class CurtailmentSetting(object):
             self.equation_args = equation['equation_args']
             self.points = symbols(self.equation_args)
             self.expr = parse_expr(equation['operation'])
+        if isinstance(load, dict):
+            load_args = load['equation_args']
+            self.load_points = symbols(self.equation_args)
+            load_expr = parse_expr(load['operation'])
+            self.load = {'load_equation': load_expr, 'load_equation_args': load_args} 
+        else:
+            self.load = load
 
     def ingest_data(self, data):
         pass
@@ -279,9 +285,10 @@ class CurtailmentSetting(object):
                 'load': self.load,
                 'offset': self.offset,
                 'revert_priority': self.revert_priority,
-                'equation': self.expr,
-                'equation_args': self.equation_args,
-                'curtailment_method': self.curtailment_method}
+                'curtail_equation': self.expr,
+                'curtail_equation_args': self.equation_args,
+                'curtailment_method': self.curtailment_method
+                }
         else:
             return {'point': self.point,
                     'value': self.value,
@@ -885,18 +892,29 @@ def ilc_agent(config_path, **kwargs):
                 revert_priority = curtail['revert_priority']
                 curtailment_method = curtail.get('curtailment_method', 'value')
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
+                
+                if isinstance(curtail_load, dict):
+                    load_equation = curtail_load['load_equation']
+                    load_point_values = []
+                    for item in curtail_load['load_equation_args']:
+                        point_get = base_rpc_path(unit=device_name, point=item)
+                        value = self.vip.rpc.call(device_actuator, 'get_point', point_get).get(timeout=5)
+                        load_point_values.append((item, value))
+                    curtail_load = load_equation.subs(load_point_values)
+                    _log.debug("WOBAH1: {}".format(curtail_load))
 
                 if curtailment_method.lower() == 'offset':
                     value = self.vip.rpc.call(device_actuator, 'get_point', curtailed_point).get(timeout=5)
                     curtailed_value = value + curtail['offset']
                 elif curtailment_method.lower() == 'equation':
-                    equation = curtail['equation']
+                    equation = curtail['curtail_equation']
                     equation_point_values = []
-                    for item in curtail['equation_args']:
+                    for item in curtail['curtail_equation_args']:
                         point_get = base_rpc_path(unit=device_name, point=item)
                         value = self.vip.rpc.call(device_actuator, 'get_point', point_get).get(timeout=5)
-                        equation_point_values.append((item, value))
-                        curtailed_value = equation.subs(equation_point_values)
+                        equation_point_values.append((item, value))  
+                    curtailed_value = equation.subs(equation_point_values)
+                    _log.debug("WOBAH2: {}".format(curtailed_value))
                 else:
                     value = self.vip.rpc.call(device_actuator, 'get_point', curtailed_point).get(timeout=5)
                     curtailed_value = curtail_value
