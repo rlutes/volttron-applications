@@ -255,7 +255,7 @@ class HistoryCriterion(BaseCriterion):
 
 
 class CurtailmentSetting(object):
-    def __init__(self, point=None, value=None, load=None, offset=None, revert_priority=None):
+    def __init__(self, point=None, value=None, load=None, offset=None, revert_priority=None, equation=None, curtailment_method='value'):
         if None in (point, value, load):
             raise ValueError('Missing parameter')
         self.point = point
@@ -263,16 +263,32 @@ class CurtailmentSetting(object):
         self.value = value
         self.offset = offset
         self.revert_priority = revert_priority
+        self.curtailment_method = curtailment_method
+        if curtailment_method.lower() == 'equation':
+            self.equation_args = equation['equation_args']
+            self.points = symbols(self.equation_args)
+            self.expr = parse_expr(equation['operation'])
 
     def ingest_data(self, data):
         pass
 
     def get_curtailment_dict(self):
-        return {'point': self.point,
+        if self.curtailment_method.lower() == 'equation':
+            return {'point': self.point,
                 'value': self.value,
                 'load': self.load,
                 'offset': self.offset,
-                'revert_priority': self.revert_priority}
+                'revert_priority': self.revert_priority,
+                'equation': self.expr,
+                'equation_args': self.equation_args,
+                'curtailment_method': self.curtailment_method}
+        else:
+            return {'point': self.point,
+                    'value': self.value,
+                    'load': self.load,
+                    'offset': self.offset,
+                    'revert_priority': self.revert_priority,
+                    'curtailment_method': self.curtailment_method}
 
 class ConditionalCurtailment(object):
     def __init__(self, condition=None, conditional_args=None, **kwargs):
@@ -697,7 +713,6 @@ def ilc_agent(config_path, **kwargs):
             self.create_device_status_publish(str_now, device_name, data, topic, meta)
 
         def create_device_status_publish(self, str_time, device_name, data, topic, meta):
-            _log.debug('WOBAH: {}'.format(device_name))
             device_token = device_cluster.devices[device_name].criteria.keys()[0]
             curtail = clusters.get_device(device_name).get_curtailment(device_token)
             curtail_pt = curtail['point']
@@ -868,15 +883,24 @@ def ilc_agent(config_path, **kwargs):
                 current_offset = curtail['offset']
                 curtail_value = curtail['value']
                 revert_priority = curtail['revert_priority']
-
+                curtailment_method = curtail.get('curtailment_method', 'value')
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
-                value = self.vip.rpc.call(device_actuator, 'get_point', curtailed_point).get(timeout=5)
 
-                if current_offset is not None:
+                if curtailment_method.lower() == 'offset':
+                    value = self.vip.rpc.call(device_actuator, 'get_point', curtailed_point).get(timeout=5)
                     curtailed_value = value + curtail['offset']
+                elif curtailment_method.lower() == 'equation':
+                    equation = curtail['equation']
+                    equation_point_values = []
+                    for item in curtail['equation_args']:
+                        point_get = base_rpc_path(unit=device_name, point=item)
+                        value = self.vip.rpc.call(device_actuator, 'get_point', point_get).get(timeout=5)
+                        equation_point_values.append((item, value))
+                        curtailed_value = equation.subs(equation_point_values)
                 else:
+                    value = self.vip.rpc.call(device_actuator, 'get_point', curtailed_point).get(timeout=5)
                     curtailed_value = curtail_value
-                # TODO: remove offset from curtailment manager
+
                 _log.debug('Setting '+curtailed_point+' to '+str(curtailed_value))
 
                 try:
@@ -884,7 +908,7 @@ def ilc_agent(config_path, **kwargs):
                         break
                     result = self.vip.rpc.call(device_actuator, 'set_point',
                                                agent_id, curtailed_point,
-                                               curtailed_value).get(timeout=5)
+                                               str(curtailed_value)).get(timeout=5)
                 except RemoteError as ex:
                     _log.warning('Failed to set {} to {}: {}'
                                  .format(curtailed_point, curtailed_value, str(ex)))
@@ -1040,10 +1064,10 @@ def ilc_agent(config_path, **kwargs):
                 
         def stagger_release_setup(self):
             _log.debug('Number or curtailed devices: {}'.format(len(self.devices_curtailed)))
-            device_group_size = max(1, round(minimum_stagger_window * len(self.devices_curtailed)/stagger_release_time))
             _log.debug('MINIMUM: {} ------- STAGGER: {} ------------- NUMBER: {}'.format(minimum_stagger_window, stagger_release_time, len(self.devices_curtailed)))
+
+            device_group_size = max(1, round(minimum_stagger_window * len(self.devices_curtailed)/stagger_release_time))
             self.device_group_size = int(device_group_size)
-            
             self.current_stagger = max(minimum_stagger_window, stagger_release_time*self.device_group_size/len(self.devices_curtailed))
 
             _log.debug('Current stagger time:  {}'.format(self.current_stagger))
@@ -1051,9 +1075,7 @@ def ilc_agent(config_path, **kwargs):
 
         def release_devices(self):
             for device in self.scheduled_devices:
-                result = self.vip.rpc.call(
-                    device[1], 'request_cancel_schedule', agent_id,
-                    device[0]).get(timeout=10)
+                result = self.vip.rpc.call(device[1], 'request_cancel_schedule', agent_id, device[0]).get(timeout=10)
             self.scheduled_devices = set()
 
         def reinit_stagger(self, reset_all=False):
