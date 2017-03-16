@@ -901,7 +901,6 @@ def ilc_agent(config_path, **kwargs):
                         value = self.vip.rpc.call(device_actuator, 'get_point', point_get).get(timeout=5)
                         load_point_values.append((item, value))
                     curtail_load = load_equation.subs(load_point_values)
-                    _log.debug("WOBAH1: {}".format(curtail_load))
 
                 if curtailment_method.lower() == 'offset':
                     value = self.vip.rpc.call(device_actuator, 'get_point', curtailed_point).get(timeout=5)
@@ -914,7 +913,6 @@ def ilc_agent(config_path, **kwargs):
                         value = self.vip.rpc.call(device_actuator, 'get_point', point_get).get(timeout=5)
                         equation_point_values.append((item, value))  
                     curtailed_value = equation.subs(equation_point_values)
-                    _log.debug("WOBAH2: {}".format(curtailed_value))
                 else:
                     value = self.vip.rpc.call(device_actuator, 'get_point', curtailed_point).get(timeout=5)
                     curtailed_value = curtail_value
