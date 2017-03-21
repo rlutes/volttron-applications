@@ -460,8 +460,11 @@ class Device(object):
     def get_curtailment(self, token):
         return self.criteria[token].get_curtailment()
 
-    def get_on_commands(self):
-        return [command for command, state in self.command_status.iteritems() if state]
+    def get_on_commands(self, release=False):
+        if not release:
+            return [command for command, state in self.command_status.iteritems() if state]
+        else:
+            return [command for command, state in self.command_status.iteritems()]
 
 
 class DeviceCluster(object):
@@ -474,10 +477,10 @@ class DeviceCluster(object):
         for device_name, device_config in cluster_config.iteritems():
             self.devices[device_name, actuator] = Device(device_config)
 
-    def get_all_device_evaluations(self):
+    def get_all_device_evaluations(self, release=False):
         results = {}
         for name, device in self.devices.iteritems():
-            for token in device.get_on_commands():
+            for token in device.get_on_commands(release):
                 evaluations = device.evaluate(token)
                 results[name[0], token, name[1]] = evaluations
         return results
@@ -506,10 +509,11 @@ class Clusters(object):
         for device in self.devices.itervalues():
             device.reset_currently_curtailed()
 
-    def get_score_order(self):
+    def get_score_order(self, release=False, release_order=True):
         all_scored_devices = []
         for cluster in self.clusters:
-            device_evaluations = cluster.get_all_device_evaluations()
+            device_evaluations = cluster.get_all_device_evaluations(release)
+            
 
             _log.debug('Device Evaluations: ' + str(device_evaluations))
 
@@ -520,8 +524,10 @@ class Clusters(object):
             _log.debug('Input Array: ' + str(input_arr))
             scored_devices = build_score(input_arr, cluster.row_average, cluster.priority)
             all_scored_devices.extend(scored_devices)
-
-        all_scored_devices.sort(reverse=True)
+        if not release:
+            all_scored_devices.sort(reverse=True)
+        else:
+            all_scored_devices.sort(reverse=release_order)
         _log.debug('Scored Devices: ' + str(all_scored_devices))
         results = [x[1] for x in all_scored_devices]
 
@@ -638,6 +644,7 @@ def ilc_agent(config_path, **kwargs):
     stagger_release = config.get('stagger_release', False)
     minimum_stagger_window = int(curtail_confirm.total_seconds() + 2)
     stagger_off_time = config.get('stagger_off_time', True)
+    ahp_release_reverse = config.get('reverse_release', False)
     _log.debug('Minimum stagger window: {}'.format(minimum_stagger_window))
     if stagger_release_time - minimum_stagger_window < minimum_stagger_window:
         stagger_release = False
@@ -1021,11 +1028,21 @@ def ilc_agent(config_path, **kwargs):
 
         def reset_devices(self, reset_all=False):
             _log.info('Resetting Devices: {}'.format(self.devices_curtailed))
-            current_devices_curtailed = deepcopy(self.devices_curtailed)
             index_counter = 0
             if reset_all:
-                self.device_group_size = len(self.devices_curtailed)  
+                self.device_group_size = len(self.devices_curtailed)
+
+            score_order = clusters.get_score_order(release=True, release_order=ahp_release_reverse)
+            devices_curtailed = []
+            for score in score_order:
+                for devices in self.devices_curtailed:
+                    if devices[1] == score[1]:
+                        devices_curtailed.append(devices)
+                       
+            self.devices_curtailed = devices_curtailed
+            current_devices_curtailed = deepcopy(self.devices_curtailed)
             for item in xrange(self.device_group_size):
+
                 if item >= len(self.devices_curtailed):
                     break
 
@@ -1035,6 +1052,7 @@ def ilc_agent(config_path, **kwargs):
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
                 revert_value = self.get_revert_value(device_name, revert_priority, revert_val)
                 _log.debug('Returned revert value: {}'.format(revert_value))
+
                 try:
                     if revert_value is not None:
                         result = self.vip.rpc.call(device_actuator, 'set_point',
