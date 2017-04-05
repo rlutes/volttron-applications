@@ -68,7 +68,7 @@ setup(
     include_package_data=True,
     name=package + 'agent',
     version=__version__,
-    install_requires=['volttron>=3.0', 'sympy', 'xlrd'],
+    install_requires=['volttron>=3.0', 'sympy'],
     packages=packages,
     entry_points={
         'setuptools.installation': [
