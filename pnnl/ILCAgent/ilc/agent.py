@@ -704,10 +704,15 @@ def ilc_agent(config_path, **kwargs):
 
             self.vip.pubsub.publish('pubsub', ilc_start_topic, headers={}, message={})
 
-
         def demand_limit_handler(self, peer, sender, bus, topic, headers, message):
-            target_info = message[0]
-            tz_info = message[1]['tz']
+
+            if isinstance(message, list):
+                target_info = message[0]
+                tz_info = message[1]['tz']
+            else:
+                target_info = message
+                tz_info = "US/Pacific"
+
             to_zone = dateutil.tz.gettz(tz_info)
             start_time = parser.parse(target_info['start']).astimezone(to_zone)
             end_time = parser.parse(target_info.get('end', start_time.replace(hour=23, minute=59, second=59))).astimezone(to_zone)
@@ -730,7 +735,6 @@ def ilc_agent(config_path, **kwargs):
             self.demand_goal = demand_goal
             if demand_goal is None:
                 self.tasks.pop(task_id)
-
 
         def handle_agent_kill(self, peer, sender, bus, topic, headers, message):
             '''
