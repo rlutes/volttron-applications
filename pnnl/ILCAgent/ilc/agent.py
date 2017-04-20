@@ -547,6 +547,7 @@ def ilc_agent(config_path, **kwargs):
     # For Target agent updates...
     target_agent_subscription = "{campus}/{building}".format(**location) + "/target"
     ilc_start_topic = "{campus}/{building}".format(**location) + "/ilc/start"
+    simulation_running = config.get('simulation_running', False)
     # --------------------------------------------------------------------------------
 
     cluster_configs = config['clusters']
@@ -719,18 +720,42 @@ def ilc_agent(config_path, **kwargs):
             demand_goal = float(target_info['target'])
             task_id = target_info['id']
 
+            if simulation_running:
+                _log.debug("TARGET_DEBUG: Simulation running.")
+                for key, value in self.tasks:
+                    if value['start'] <= start_time < end_time:
+                        self.task.pop(key)
+                 _log.debug("TARGET_DEBUG: Adding task to scheduled tasks ---- start: {} --------- end: {} --------- target: {}.".format(start_time, end_time, target))
+                self.tasks[message['id']] = {
+                "start": start_time,
+                "end": end_time,
+                "target": demand_goal
+                }
+                return
+
             for key, value in self.tasks:
                 if start_time < value['end']:
                     for item in self.task.pop(key)['schedule']:
                         item.cancel()
 
-            self.tasks[message['id']] = {
+                self.tasks[message['id']] = {
                 "schedule": [self.core.schedule(start_time, self.demand_limit_update, demand_goal, task_id), self.core.schedule(end_time, self.demand_limit_update, None, task_id)],
                 "start": start_time,
                 "end": end_time,
                 "target": demand_goal
             }
-
+        def check_schedule(self, current_time):
+            _log.debug("TARGET_DEBUG: Simulation checking schedule.")
+            if self.tasks:
+                for key, value in self.tasks:
+                    if value['start'] <= current_time < value['end']
+                        _log.debug("TARGET_DEBUG: setting demand limit: {} -------------- simulation time:{}.".format(value['target'], current_time))
+                        self.demand_limit = value['target']
+                    elif current_time >= value['end']
+                        _log.debug("TARGET_DEBUG: Event ending -- demand limit: {} -------------- simulation time:{}.".format(value['target'], current_time))
+                        self.demand_limit = None
+                        self.task.pop(key)
+                
         def demand_limit_update(self, demand_goal, task_id):
             self.demand_goal = demand_goal
             if demand_goal is None:
@@ -844,10 +869,13 @@ def ilc_agent(config_path, **kwargs):
             try:
                 # if self.kill_signal_recieved:
                 # return
-
+                
                 _log.debug('Reading building power data.')
                 current_power = float(message[0][power_point])
                 current_time = parser.parse(headers['Date'])
+
+                if simulation_running:
+                    self.check_schedule(current_time)
 
                 if self.power_meta is None:
                     self.power_meta = message[1][power_point]
