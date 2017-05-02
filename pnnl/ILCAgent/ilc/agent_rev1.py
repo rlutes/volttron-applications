@@ -537,7 +537,7 @@ def ilc_agent(config_path, **kwargs):
     Analytical Hierarchical Process (AHP).
     '''
     config = utils.load_config(config_path)
-
+    
     application_category = config.get('application_category')
     application_name = config.get('application_name')
     location = {}
@@ -546,7 +546,7 @@ def ilc_agent(config_path, **kwargs):
 
     # --------------------------------------------------------------------------------
     # For Target agent updates...
-    target_agent_subscription = "analysis/target_agent/{campus}/{building}".format(**location) + "/goal"
+    target_agent_subscription = "{campus}/{building}".format(**location) + "/target"
     ilc_start_topic = "{campus}/{building}".format(**location) + "/ilc/start"
     simulation_running = config.get('simulation_running', False)
     # --------------------------------------------------------------------------------
@@ -681,8 +681,6 @@ def ilc_agent(config_path, **kwargs):
             self.demand_limit = float(demand_limit) if demand_limit.lower() != "trigger" else None
             self.power_meta = None
             self.tasks = {}
-            self.tz = None
-            self.simulation = simulation_running
 
         @Core.receiver('onstart')
         def starting_base(self, sender, **kwargs):
@@ -707,23 +705,59 @@ def ilc_agent(config_path, **kwargs):
                                           prefix=kill_device_topic,
                                           callback=self.handle_agent_kill)
 
-            demand_limit_handler = self.demand_limit_handler if not self.simulation else self.simulation_demand_limit_handler
-            self.vip.pubsub.subscribe(peer='pubsub', prefix=target_agent_subscription, callback=demand_limit_handler)
-            _log.debug('Subscribing to ' + target_agent_subscription)
+            if self.simulation:
+                call_back = self.simulation_demand_limit_handler
+            else:
+                call_back = self.demand_limit_handler
+
+            self.vip.pubsub.subscribe(peer='pubsub', prefix=target_agent_subscription, callback=call_back)
+
             self.vip.pubsub.publish('pubsub', ilc_start_topic, headers={}, message={})
 
-        def demand_limit_handler(self, peer, sender, bus, topic, headers, message):
+        def simulation_demand_limit_handler(self, peer, sender, bus, topic, headers, message):
             if isinstance(message, list):
                 target_info = message[0]
-                tz_info = message[1]['start']['tz']
+                tz_info = message[1]['tz']
             else:
                 target_info = message
                 tz_info = "US/Pacific"
 
-            self.tz = to_zone = dateutil.tz.gettz(tz_info)
+            to_zone = dateutil.tz.gettz(tz_info)
+            # start_time = parser.parse(target_info['start']).astimezone(to_zone)
+            # end_time = parser.parse(target_info.get('end', start_time.replace(hour=23, minute=59, second=59))).astimezone(to_zone)
+
+            start_time = parser.parse(target_info['start'])
+            end_time = parser.parse(target_info.get('end', start_time.replace(hour=23, minute=59, second=59)))
+            demand_goal = float(target_info['target'])
+            task_id = target_info['id']
+
+            _log.debug("TARGET_DEBUG: Simulation running.")
+            for key, value in self.tasks.items():
+                if value['start'] <= start_time < value['end']:
+                    self.tasks.pop(key)
+
+            _log.debug(
+                "TARGET_DEBUG: Adding task to scheduled tasks ---- start: {} --------- end: {} --------- target: {}.".format(
+                    start_time, end_time, demand_goal))
+            self.tasks[message['id']] = {
+                "start": start_time,
+                "end": end_time,
+                "target": demand_goal
+            }
+            return
+
+        def demand_limit_handler(self, peer, sender, bus, topic, headers, message):
+
+            if isinstance(message, list):
+                target_info = message[0]
+                tz_info = message[1]['tz']
+            else:
+                target_info = message
+                tz_info = "US/Pacific"
+
+            to_zone = dateutil.tz.gettz(tz_info)
             start_time = parser.parse(target_info['start']).astimezone(to_zone)
-            end_time = parser.parse(
-                target_info.get('end', start_time.replace(hour=23, minute=59, second=59))).astimezone(to_zone)
+            end_time = parser.parse(target_info.get('end', start_time.replace(hour=23, minute=59, second=59))).astimezone(to_zone)
 
             demand_goal = float(target_info['target'])
             task_id = target_info['id']
@@ -734,63 +768,26 @@ def ilc_agent(config_path, **kwargs):
                         item.cancel()
 
                 self.tasks[target_info['id']] = {
-                    "schedule": [self.core.schedule(start_time, self.demand_limit_update, demand_goal, task_id),
-                                 self.core.schedule(end_time, self.demand_limit_update, None, task_id)],
-                    "start": start_time,
-                    "end": end_time,
-                    "target": demand_goal
-                }
-            return
-
-        def simulation_demand_limit_handler(self, peer, sender, bus, topic, headers, message):
-            if isinstance(message, list):
-                target_info = message[0]
-                tz_info = message[1]['start']['tz']
-            else:
-                target_info = message
-                tz_info = "US/Pacific"
-
-            self.tz = to_zone = dateutil.tz.gettz(tz_info)
-            start_time = parser.parse(target_info['start']).astimezone(to_zone)
-            end_time = parser.parse(
-                target_info.get('end', start_time.replace(hour=23, minute=59, second=59))).astimezone(to_zone)
-
-            demand_goal = float(target_info['target'])
-            task_id = target_info['id']
-
-            _log.debug("TARGET_DEBUG: Simulation running.")
-            for key, value in self.tasks.items():
-                if (start_time < value['end'] and end_time > value['start']) or (value['start'] <= start_time <= value['end']):
-                    self.tasks.pop(key)
-
-            _log.debug(
-                "TARGET_DEBUG: Adding task to scheduled tasks ---- start: {} --------- end: {} --------- target: {}.".format(
-                    start_time, end_time, demand_goal))
-            self.tasks[target_info['id']] = {
+                "schedule": [self.core.schedule(start_time, self.demand_limit_update, demand_goal, task_id), self.core.schedule(end_time, self.demand_limit_update, None, task_id)],
                 "start": start_time,
                 "end": end_time,
                 "target": demand_goal
             }
-            return
 
         def check_schedule(self, current_time):
             _log.debug("TARGET_DEBUG: Simulation checking schedule.")
             if self.tasks:
-                current_time = current_time.replace(tzinfo=self.tz)
                 for key, value in self.tasks.items():
                     if value['start'] <= current_time < value['end']:
-                        _log.debug("TARGET_DEBUG: setting demand limit: {} -------------- simulation time:{}.".format(
-                            value['target'], current_time))
+                        _log.debug("TARGET_DEBUG: setting demand limit: {} -------------- simulation time:{}.".format(value['target'], current_time))
                         self.demand_limit = value['target']
                     elif current_time >= value['end']:
-                        _log.debug(
-                            "TARGET_DEBUG: Event ending -- demand limit: {} -------------- simulation time:{}.".format(
-                                value['target'], current_time))
+                        _log.debug("TARGET_DEBUG: Event ending -- demand limit: {} -------------- simulation time:{}.".format(value['target'], current_time))
                         self.demand_limit = None
                         self.tasks.pop(key)
-
+                
         def demand_limit_update(self, demand_goal, task_id):
-            self.demand_limit = demand_goal
+            self.demand_goal = demand_goal
             if demand_goal is None:
                 self.tasks.pop(task_id)
 
@@ -902,7 +899,7 @@ def ilc_agent(config_path, **kwargs):
             try:
                 # if self.kill_signal_recieved:
                 # return
-
+                
                 _log.debug('Reading building power data.')
                 current_power = float(message[0][power_point])
                 current_time = parser.parse(headers['Date'])
@@ -910,8 +907,8 @@ def ilc_agent(config_path, **kwargs):
                 if simulation_running:
                     self.check_schedule(current_time)
 
-                if self.power_meta is None:
-                    self.power_meta = message[1][power_point]
+                # if self.power_meta is None:
+                #    self.power_meta = message[1][power_point]
 
                 if self.bldg_power:
                     current_average_window = (self.bldg_power[-1][0] - self.bldg_power[0][0])
@@ -989,27 +986,20 @@ def ilc_agent(config_path, **kwargs):
             sequence.
             '''
             _log.debug('Checking building load.')
-
-            if self.demand_limit is None:
-                target_info = self.vip.rpc.call('target_agent', 'get_target_info', format_timestamp(now),
-                                                "US/Pacific").get(timeout=15)
+            if self.demand_limit is not None:
+                result = 'Current load of ({load}) kW is below demand limit of {limit} kW.'.format(load=bldg_power,
+                                                                                                   limit=self.demand_limit)
+            else:
+                target_info = self.vip.rpc.call('target_agent', 'get_target_info', format_timestamp(now)).get(timeout=5)
                 _log.debug("TARGET_DEBUG: RPC call to TargetAgent returned: {}".format(target_info))
-                if isinstance(target_info, list) and target_info:
+                if isinstance(target_info, dict) and target_info:
                     # target_info['id'] = str(target_info['start'])
                     self.demand_limit_handler(None, None, None, None, None, target_info)
                 elif isinstance(target_info, float):
                     self.demand_limit = target_info
-                elif self.demand_limit:
-                    result = 'Demand already set -- Current goal: {goal} --- Current load: ({load}) kW.'.format(
-                        goal=self.demand_limit, load=bldg_power)
-                    _log.debug(result)
                 else:
-                    result = 'Demand goal has not been set, no curtailment actions will be taken. Current load: ({load}) kW.'.format(
-                        load=bldg_power)
+                    result = 'Demand goal has not been set, no curtailment actions will be taken. Current load: ({load}) kW.'.format(load=bldg_power)
                     _log.debug(result)
-            else:
-                result = 'Current load of ({load}) kW is below demand limit of {limit} kW.'.format(load=bldg_power,
-                                                                                                   limit=self.demand_limit)
 
             str_now = str(format_timestamp(now))
             if self.demand_limit is not None and bldg_power > self.demand_limit:
@@ -1023,7 +1013,7 @@ def ilc_agent(config_path, **kwargs):
                 self.device_group_size = None
                 scored_devices = self.actuator_request(score_order)
                 self.curtail(scored_devices, bldg_power, now)
-                # self.create_application_status(str_now, result)
+            # self.create_application_status(str_now, result)
 
         def curtail(self, scored_devices, bldg_power, now):
             '''Curtail loads by turning off device (or device components)'''
@@ -1202,7 +1192,7 @@ def ilc_agent(config_path, **kwargs):
                     break
 
                 device_name, command, revert_val, revert_priority, modified_time, device_actuator = \
-                    self.devices_curtailed[item]
+                self.devices_curtailed[item]
                 curtail = clusters.get_device((device_name, device_actuator)).get_curtailment(command)
                 curtail_pt = curtail['point']
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)
@@ -1293,4 +1283,6 @@ if __name__ == '__main__':
         sys.exit(main())
     except KeyboardInterrupt:
         pass
+
+
 
