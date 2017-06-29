@@ -92,13 +92,12 @@ mappers = {}
 criterion_registry = {}
 
 
-def parse_sympy(data, condition=False):
+def parse_sympy(data, condition=False, equation=False):
     """
     :param data:
     :return:
     """
-    def clean_text(text):
-        rep = {" ": "", "(": "", ")": ""}  # define desired replacements here
+    def clean_text(text, rep={" ": "", "(": "", ")": ""}):
         rep = dict((re.escape(k), v) for k, v in rep.iteritems())
         pattern = re.compile("|".join(rep.keys()))
         new_key = pattern.sub(lambda m: rep[re.escape(m.group(0))], text)
@@ -117,9 +116,11 @@ def parse_sympy(data, condition=False):
             for ind in range(len(temp_list)):
                 temp_list[ind] = "(" + temp_list[ind] + ")"
             return_data = '&'.join(temp_list)
+        elif equation:
+            rep = { "[": "(", "]": ")"}
+            return_data = clean_text(temp_list[0], rep=rep)
         else:
             return_data = temp_list
-
     else:
         return_data = clean_text(data)
     # _log.debug("Parsing: {} to {}".format(data, return_data))
@@ -205,7 +206,7 @@ class FormulaCriterion(BaseCriterion):
             raise ValueError('Missing parameter')
         self.operation_args = parse_sympy(operation_args)
         self.points = symbols(self.operation_args)
-        self.expr = parse_expr(parse_sympy(operation, condition=True))
+        self.expr = parse_expr(parse_sympy(operation, equation=True))
         self.pt_list = []
 
     def evaluate(self):
@@ -303,7 +304,7 @@ class CurtailmentSetting(object):
             load_args = parse_sympy(load['equation_args'])
             actuator_args = load['equation_args']
             self.load_points = symbols(load_args)
-            load_expr = parse_expr(parse_sympy(load['operation'], condition=True))
+            load_expr = parse_expr(parse_sympy(load['operation'], equation=True))
             self.load = {'load_equation': load_expr, 'load_equation_args': load_args, 'actuator_args': actuator_args}
         else:
             self.load = load
@@ -967,8 +968,8 @@ def ilc_agent(config_path, **kwargs):
                     _log.debug('Break ends: {}'.format(self.break_end))
                     return
 
-                #if len(self.bldg_power) < 5:
-                    #return
+                if len(self.bldg_power) < 15:
+                    return
 
                 self.check_load(self.average_power, current_time)
             finally:
@@ -1096,7 +1097,7 @@ def ilc_agent(config_path, **kwargs):
                     if self.kill_signal_recieved:
                         break
                     result = self.vip.rpc.call(device_actuator, 'set_point', agent_id, curtailed_point,
-                                               str(curtailed_value)).get(timeout=5)
+                                               curtailed_value).get(timeout=5)
                     gevent.sleep(3)
                 except RemoteError as ex:
                     _log.warning('Failed to set {} to {}: {}'.format(curtailed_point, curtailed_value, str(ex)))
