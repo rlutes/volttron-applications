@@ -97,6 +97,7 @@ def parse_sympy(data, condition=False):
     :param data:
     :return:
     """
+
     def clean_text(text, rep={" ": ""}):
         rep = dict((re.escape(k), v) for k, v in rep.iteritems())
         pattern = re.compile("|".join(rep.keys()))
@@ -757,15 +758,17 @@ def ilc_agent(config_path, **kwargs):
 
         def demand_limit_handler(self, peer, sender, bus, topic, headers, message):
             if isinstance(message, list):
-                target_info = message[0]
-                tz_info = message[1]['start']['tz']
+                target_info = message[0]["value"]
+                # tz_info = message[1]["value"]['tz']
+                tz_info = "US/Pacific"
             else:
                 target_info = message
                 tz_info = "US/Pacific"
             _log.debug("TARGET_DEBUG1: {} -- {}".format(message, target_info))
             self.tz = to_zone = dateutil.tz.gettz(tz_info)
             start_time = parser.parse(target_info['start']).astimezone(to_zone)
-            end_time = parser.parse(target_info.get('end', start_time.replace(hour=23, minute=59, second=59))).astimezone(to_zone)
+            end_time = parser.parse(
+                target_info.get('end', start_time.replace(hour=23, minute=59, second=59))).astimezone(to_zone)
 
             demand_goal = float(target_info['target'])
             task_id = target_info['id']
@@ -774,16 +777,18 @@ def ilc_agent(config_path, **kwargs):
                 if start_time == value['end']:
                     start_time += td(seconds=15)
                     _log.debug("TARGET_DEBUG3: {}".format(target_info['id']))
-                if (start_time < value['end'] and end_time > value['start']) or value['start'] <= start_time <= value['end']:
+                if (start_time < value['end'] and end_time > value['start']) or value['start'] <= start_time <= value[
+                    'end']:
+                    _log.debug("TARGET_DEBUG4: {}".format(target_info['id']))
                     for item in self.tasks.pop(key)['schedule']:
                         item.cancel()
 
             current_task_exits = self.tasks.get(target_info['id'])
             if current_task_exits is not None:
-                _log.debug("TARGET_DEBUG4: duplicate task received - {}".format(target_info['id']))
+                _log.debug("TARGET_DEBUG5: duplicate task received - {}".format(target_info['id']))
                 for item in self.tasks.pop(target_info['id'])['schedule']:
                     item.cancel()
-            _log.debug("TARGET_DEBUG5: create schedule for id: {}".format(target_info['id']))
+            _log.debug("TARGET_DEBUG6: create schedule for id: {}".format(target_info['id']))
             self.tasks[target_info['id']] = {
                 "schedule": [self.core.schedule(start_time, self.demand_limit_update, demand_goal, task_id),
                              self.core.schedule(end_time, self.demand_limit_update, None, task_id)],
@@ -812,7 +817,7 @@ def ilc_agent(config_path, **kwargs):
             _log.debug("TARGET_DEBUG: Simulation running.")
             for key, value in self.tasks.items():
                 if (start_time < value['end'] and end_time > value['start']) or (
-                        value['start'] <= start_time <= value['end']):
+                                value['start'] <= start_time <= value['end']):
                     self.tasks.pop(key)
 
             _log.debug(
@@ -876,7 +881,7 @@ def ilc_agent(config_path, **kwargs):
             current_time_str = format_timestamp(now)
             parsed_data = parse_sympy(data)
             clusters.get_device(device_name).ingest_data(now, parsed_data)
-            self.create_device_status_publish(current_time_str, device_name, data, topic, meta)
+           #  self.create_device_status_publish(current_time_str, device_name, data, topic, meta)
             self.create_curtailment_publish(current_time_str, device_name, meta)
 
         def create_curtailment_publish(self, current_time_str, device_name, meta):
@@ -1043,7 +1048,7 @@ def ilc_agent(config_path, **kwargs):
                     _log.debug('Break ends: {}'.format(self.break_end))
                     return
 
-                if len(self.bldg_power) < 15:
+                if len(self.bldg_power) < 20:
                     return
 
                 self.check_load(self.average_power, current_time)
@@ -1298,7 +1303,7 @@ def ilc_agent(config_path, **kwargs):
                     break
 
                 device_name, command, revert_val, revert_priority, modified_time, device_actuator = \
-                    self.devices_curtailed[item]
+                self.devices_curtailed[item]
                 curtail = clusters.get_device((device_name, device_actuator)).get_curtailment(command)
                 curtail_pt = curtail['point']
                 curtailed_point = base_rpc_path(unit=device_name, point=curtail_pt)

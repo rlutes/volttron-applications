@@ -58,7 +58,6 @@ import sys
 import operator
 import logging
 import math
-from xlrd import open_workbook
 from volttron.platform.agent import utils
 from collections import defaultdict
 MATRIX_ROWSTRING = "%20s\t%12.2f%12.2f%12.2f%12.2f%12.2f"
@@ -167,8 +166,11 @@ def validate_input(pairwise_matrix, col_sums,
 
     # Calculate the consistency ratio
     consistency_ratio = consistency_index / random_index[len(col_sums)]
-
-    return consistency_ratio < 0.2
+    _log.debug("Consistency ratio: {}".format(consistency_ratio))
+    if consistency_ratio < 0.2:
+        return True
+    return False
+    #return consistency_ratio < 0.2
 
 
 def build_score(_matrix, weight, priority):
@@ -208,3 +210,4 @@ def input_matrix(builder, criteria_labels):
                 mat_list.append(0.0)
 
     return inp_mat
+
