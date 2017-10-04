@@ -2,57 +2,64 @@
 -*- coding: utf-8 -*- {{{
 vim: set fenc=utf-8 ft=python sw=4 ts=4 sts=4 et:
 
-Copyright (c) 2017, Battelle Memorial Institute
+
+Copyright © 2017, Battelle Memorial Institute
 All rights reserved.
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
+1.  Battelle Memorial Institute (hereinafter Battelle) hereby grants
+    permission to any person or entity lawfully obtaining a copy of this
+    software and associated documentation files (hereinafter “the Software”)
+    to redistribute and use the Software in source and binary forms, with or
+    without modification.  Such person or entity may use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of the Software, and
+    may permit others to do so, subject to the following conditions:
 
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-   notice, this list of conditions and the following disclaimer in
-   the documentation and/or other materials provided with the
-   distribution.
+•	Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the following disclaimers.
+•	Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+•	Other than as used herein, neither the name Battelle Memorial Institute or
+    Battelle may be used in any form whatsoever without the express written
+    consent of Battelle.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+2.	THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED. IN NO EVENT SHALL BATTELLE OR CONTRIBUTORS BE LIABLE FOR
+    ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+    LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+    OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+    DAMAGE.
 
-The views and conclusions contained in the software and documentation
-are those of the authors and should not be interpreted as representing
-official policies, either expressed or implied, of the FreeBSD
-Project.
+The views and conclusions contained in the software and documentation are those
+of the authors and should not be interpreted as representing official policies,
+either expressed or implied, of the FreeBSD Project.
 
-This material was prepared as an account of work sponsored by an
-agency of the United States Government.  Neither the United States
-Government nor the United States Department of Energy, nor Battelle,
-nor any of their employees, nor any jurisdiction or organization that
-has cooperated in the development of these materials, makes any
-warranty, express or implied, or assumes any legal liability or
-responsibility for the accuracy, completeness, or usefulness or any
-information, apparatus, product, software, or process disclosed, or
+This material was prepared as an account of work sponsored by an agency of the
+United States Government. Neither the United States Government nor the United
+States Department of Energy, nor Battelle, nor any of their employees, nor any
+jurisdiction or organization that has cooperated in the development of these
+materials, makes any warranty, express or implied, or assumes any legal
+liability or responsibility for the accuracy, completeness, or usefulness or
+any information, apparatus, product, software, or process disclosed, or
 represents that its use would not infringe privately owned rights.
 
-Reference herein to any specific commercial product, process, or
-service by trade name, trademark, manufacturer, or otherwise does not
-necessarily constitute or imply its endorsement, recommendation, or
-favoring by the United States Government or any agency thereof, or
-Battelle Memorial Institute. The views and opinions of authors
-expressed herein do not necessarily state or reflect those of the
-United States Government or any agency thereof.
+Reference herein to any specific commercial product, process, or service by
+trade name, trademark, manufacturer, or otherwise does not necessarily
+constitute or imply its endorsement, recommendation, or favoring by the
+United States Government or any agency thereof, or Battelle Memorial Institute.
+The views and opinions of authors expressed herein do not necessarily state or
+reflect those of the United States Government or any agency thereof.
 
 PACIFIC NORTHWEST NATIONAL LABORATORY
-operated by BATTELLE for the UNITED STATES DEPARTMENT OF ENERGY
+operated by
+BATTELLE
+for the
+UNITED STATES DEPARTMENT OF ENERGY
 under Contract DE-AC05-76RL01830
 """
 import os
@@ -74,7 +81,7 @@ from ilc.curtailment_hanlder import CurtailmentCluster, CurtailmentContainer
 from ilc.criteria_handler import CriteriaContainer, CriteriaCluster, parse_sympy
 
 
-__version__ = "3.0.2"
+__version__ = "1.0.3r"
 
 setup_logging()
 _log = logging.getLogger(__name__)
@@ -298,6 +305,7 @@ class ILCAgent(Agent):
         subdevices = self.curtailment.get_device(device_name).command_status.keys()
         for subdevice in subdevices:
             status = self.curtailment.get_device(device_name).currently_curtailed[subdevice]
+            _log.debug("Device: {} -- subdevice: {} -- status: {}".format(device_name, subdevice, status))
             self.criteria.get_device(device_name[0]).criteria_status(subdevice, status)
 
         self.criteria.get_device(device_name[0]).ingest_data(now, parsed_data)
@@ -511,8 +519,8 @@ class ILCAgent(Agent):
             if self.break_end is not None and current_time < self.break_end:
                 return
 
-            if len(self.bldg_power) < 15:
-                return
+            #if len(self.bldg_power) < 15:
+            #    return
 
             self.check_load(average_power, current_time)
         finally:
@@ -669,21 +677,21 @@ class ILCAgent(Agent):
         self.next_curtail_confirm = current_time + self.curtail_confirm
 
         for device in remaining_devices:
-            device_name, device_id, actuator = device
-            curtail = self.curtailment.get_device((device_name, actuator)).get_curtailment(device_id)
-            curtail_point, curtail_value, curtail_load, revert_priority, revert_value = self.determine_curtail_parms(curtail, device)
+            device, device_id, actuator = device
+            curtail = self.curtailment.get_device((device, actuator)).get_curtailment(device_id)
+            point, value, load, revert_priority, revert_value = self.determine_curtail_parms(curtail, device)
             try:
                 if self.kill_signal_received:
                     break
-                result = self.vip.rpc.call(actuator, "set_point", "ilc_agent", curtail_point, curtail_value).get(timeout=5)
+                result = self.vip.rpc.call(actuator, "set_point", "ilc_agent", point, value).get(timeout=5)
             except RemoteError as ex:
-                _log.warning("Failed to set {} to {}: {}".format(curtail_point, curtail_value, str(ex)))
+                _log.warning("Failed to set {} to {}: {}".format(point, value, str(ex)))
                 continue
 
-            est_curtailed += curtail_load
-            self.curtailment.get_device((device_name, actuator)).increment_curtail(device_id)
+            est_curtailed += load
+            self.curtailment.get_device((device, actuator)).increment_curtail(device_id)
             self.devices_curtailed.append(
-                [device_name, device_id, revert_value, revert_priority, format_timestamp(current_time), actuator]
+                [device, device_id, revert_value, revert_priority, format_timestamp(current_time), actuator]
             )
             if est_curtailed >= need_curtailed:
                 break
@@ -846,6 +854,7 @@ class ILCAgent(Agent):
                     _log.debug("Reverted point: {} - Result: {}".format(curtailed_point, result))
                 if currently_curtailed:
                     _log.debug("Removing from curtailed list: {} ".format(curtailed_iterate[item]))
+                    self.curtailment.get_device((device, actuator)).reset_curtail_status(device_id)
                     index = curtailed_iterate.index(curtailed_iterate[item]) - index_counter
                     currently_curtailed.pop(index)
                     index_counter += 1
