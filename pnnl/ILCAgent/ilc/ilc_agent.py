@@ -59,18 +59,17 @@ import os
 import sys
 import logging
 from datetime import timedelta as td, datetime as dt
+import math
 from dateutil import parser
 import gevent
 import dateutil.tz
-import math
 from volttron.platform.agent import utils
 from volttron.platform.messaging import topics
 from volttron.platform.agent.math_utils import mean
-from volttron.platform.agent.utils import (setup_logging, format_timestamp, get_aware_utc_now)
+from volttron.platform.agent.utils import setup_logging, format_timestamp, get_aware_utc_now
 from volttron.platform.vip.agent import Agent, Core
 from volttron.platform.jsonrpc import RemoteError
-from ilc.ilc_matrices import (extract_criteria, calc_column_sums, normalize_matrix,
-                              validate_input, build_score, input_matrix)
+from ilc.ilc_matrices import extract_criteria, calc_column_sums, normalize_matrix, validate_input
 from ilc.curtailment_hanlder import CurtailmentCluster, CurtailmentContainer
 from ilc.criteria_handler import CriteriaContainer, CriteriaCluster, parse_sympy
 
@@ -295,10 +294,16 @@ class ILCAgent(Agent):
         now = parser.parse(headers["Date"])
         current_time_str = format_timestamp(now)
         parsed_data = parse_sympy(data)
+
+        subdevices = self.curtailment.get_device(device_name).command_status.keys()
+        for subdevice in subdevices:
+            status = self.curtailment.get_device(device_name).currently_curtailed[subdevice]
+            self.criteria.get_device(device_name[0]).criteria_status(subdevice, status)
+
         self.criteria.get_device(device_name[0]).ingest_data(now, parsed_data)
         self.curtailment.get_device(device_name).ingest_data(parsed_data)
-        # self.create_device_status_publish(current_time_str, device_name, data, topic, meta)
-        self.create_curtailment_publish(current_time_str, device_name, meta)
+        self.create_device_status_publish(current_time_str, device_name, data, topic, meta)
+        # self.create_curtailment_publish(current_time_str, device_name, meta)
 
     def create_curtailment_publish(self, current_time_str, device_name, meta):
         headers = {
