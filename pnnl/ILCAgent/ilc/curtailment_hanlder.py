@@ -202,7 +202,10 @@ class CurtailmentManager(object):
             if conditional_points:
                 conditional_value = self.expr[device_id].subs(conditional_points)
             _log.debug('{} (device status) evaluated to {}'.format(self.condition[device_id], conditional_value))
-            self.command_status[device_id] = bool(conditional_value)
+            try:
+                self.command_status[device_id] = bool(conditional_value)
+            except TypeError:
+                self.command_status[device_id] = False
 
     def get_curtailment(self, device_id):
         curtailment = self.default_curtailment[device_id].get_curtailment_dict()
