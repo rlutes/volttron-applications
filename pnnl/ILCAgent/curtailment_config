@@ -5,6 +5,17 @@
                     "condition": "FirstStageCooling", 
                     "device_status_args": ["FirstStageCooling"]
             },
+            "dollar_mode": {
+                "point": "ZoneTemperatureSetPoint",
+                "curtailment_method": "equation",
+                "load": 6.0
+                "equation": {
+                        "equation_args": ["ZoneTemperature"],
+                        "operation": "ZoneTemperature + 1.0",
+                        "minimum": 71.0,
+                        "maximum": 78.0
+                }
+            },W
             "curtail": {
                 "point": "ZoneTemperatureSetPoint",
                 "curtailment_method": "offset",

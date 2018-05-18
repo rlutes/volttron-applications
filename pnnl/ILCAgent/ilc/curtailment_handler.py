@@ -110,10 +110,10 @@ def parse_sympy(data, condition=False):
 
 
 class CurtailmentCluster(object):
-    def __init__(self, cluster_config, actuator):
+    def __init__(self, cluster_config, actuator, curtailment_mode):
         self.devices = {}
         for device_name, device_config in cluster_config.items():
-            self.devices[device_name, actuator] = CurtailmentManager(device_config)
+            self.devices[device_name, actuator] = CurtailmentManager(device_config, curtailment_mode)
 
     def get_all_on_devices(self):
         results = []
@@ -156,7 +156,7 @@ class CurtailmentContainer(object):
 
 
 class CurtailmentManager(object):
-    def __init__(self, device_config):
+    def __init__(self, device_config, curtailment_mode):
         self.conditional_curtailments = defaultdict(list)
         self.command_status = {}
         self.device_status_args = {}
@@ -166,15 +166,25 @@ class CurtailmentManager(object):
         self.currently_curtailed = {}
         self.curtail_count = {}
         self.default_curtailment = {}
+        self.dollar_mode_curtailment = {}
+        self.curtailment_mode = curtailment_mode
 
         for device_id, curtail_config in device_config.items():
-            default_curtailment = curtail_config.pop('curtail')
             conditional_curtailment = curtail_config.pop('conditional_curtail', [])
+            default_curtailment = curtail_config.pop('curtail')
+            try:
+                if self.curtailment_mode == "dollar" and device_config.has_key("dollar_mode"):
+                    dollar_curtailment = curtail_config.pop('dollar_mode')
+            except:
+                self.curtailment_mode = "comfort"
+                _log.debug("dollar mode set but configuration is not correct!")
 
             for settings in conditional_curtailment:
                 conditional_curtailment = ConditionalCurtailment(**settings)
                 self.conditional_curtailments[device_id].append(conditional_curtailment)
+
             self.default_curtailment[device_id] = CurtailmentSetting(**default_curtailment)
+            self.dollar_mode_curtailment[device_id] = CurtailmentSetting(**dollar_curtailment)
 
             device_status_dict = curtail_config.pop('device_status')
             device_status_args = parse_sympy(device_status_dict['device_status_args'])
@@ -208,12 +218,15 @@ class CurtailmentManager(object):
                 self.command_status[device_id] = False
 
     def get_curtailment(self, device_id):
-        curtailment = self.default_curtailment[device_id].get_curtailment_dict()
+        if self.curtailment_mode == "dollar":
+            curtailment = self.dollar_mode_curtailment[device_id].get_curtailment_dict()
+        else:
+            curtailment = self.default_curtailment[device_id].get_curtailment_dict()
 
-        for conditional_curtailment in self.conditional_curtailments[device_id]:
-            if conditional_curtailment.check_condition():
-                curtailment = conditional_curtailment.get_curtailment()
-                break
+            for conditional_curtailment in self.conditional_curtailments[device_id]:
+                if conditional_curtailment.check_condition():
+                    curtailment = conditional_curtailment.get_curtailment()
+                    break
 
         return curtailment
 

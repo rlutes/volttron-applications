@@ -111,6 +111,7 @@ class ILCAgent(Agent):
         # For Target agent updates...
         analysis_prefix_topic = config.get("analysis_prefix_topic", "record")
         self.target_agent_subscription = "{}/target_agent".format(analysis_prefix_topic)
+        self.curtailment_mode = config.get("curtailment_mode", "comfort")
         # --------------------------------------------------------------------------------
 
         self.update_base_topic = "/".join([analysis_prefix_topic, self.agent_id])
@@ -163,7 +164,7 @@ class ILCAgent(Agent):
                 device_curtailment_config = os.path.expanduser(device_curtailment_config)
 
             curtailment_config = utils.load_config(device_curtailment_config)
-            curtailment_cluster = CurtailmentCluster(curtailment_config, cluster_actuator)
+            curtailment_cluster = CurtailmentCluster(curtailment_config, cluster_actuator, self.curtailment_mode)
             self.curtailment.add_curtailment_cluster(curtailment_cluster)
 
         self.base_device_topic = topics.DEVICES_VALUE(campus=campus,
@@ -293,6 +294,11 @@ class ILCAgent(Agent):
         self.vip.pubsub.subscribe(peer="pubsub", prefix=self.target_agent_subscription, callback=demand_limit_handler)
         _log.debug("Target agent subscription: " + self.target_agent_subscription)
         self.vip.pubsub.publish("pubsub", self.ilc_start_topic, headers={}, message={})
+
+    @Core.receiver("onstop")
+    def shutdown(self):
+        _log.debug("Shutting down ILC, releasing all controls!")
+        self.reinitialize_stagger()
 
     def setup_demand_schedule(self):
         self.tasks = {}
@@ -708,10 +714,11 @@ class ILCAgent(Agent):
         need_curtailed = bldg_power - self.demand_limit
         est_curtailed = 0.0
         remaining_devices = scored_devices[:]
-        for device in self.devices_curtailed:
-            current_tuple = (device[0], device[1], device[5])
-            if current_tuple in remaining_devices:
-                remaining_devices.remove(current_tuple)
+        if self.curtailment_mode != "dollar":
+            for device in self.devices_curtailed:
+                current_tuple = (device[0], device[1], device[5])
+                if current_tuple in remaining_devices:
+                    remaining_devices.remove(current_tuple)
 
         if not self.running_ahp:
             _log.info("Starting AHP")
