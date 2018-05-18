@@ -10,6 +10,7 @@
          }
     },
     "agent_id": "ILC",
+    "curtailment_mode": "dollar",
     "demand_limit": 30.0,
     "curtailment_time": 20.0,
     "curtailment_confirm": 5.0,
