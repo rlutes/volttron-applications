@@ -35,7 +35,7 @@ class ILCAgent(Agent):
 
         {'trigger': 'augment_load', 'source': 'inactive', 'dest': 'augment', 'after': 'augmenting_load'},
         {'trigger': 'hold', 'source': 'augment', 'dest': 'augment_holding'},
-        {'trigger': 'augment_load', 'source': 'augment_holding', 'dest': 'augment', 'after': 'augmenting_load'},
+        {'trigger': 'augment_load', 'source': 'augment_holding', 'dest': 'augment', 'after': 'augmenting_load', 'conditions': 'confirm_elapsed'},
         {'trigger': 'relaase', 'source': ['augment', 'augment_holding'], 'dest': 'augment_releasing', 'after': 'release_augment'},
         {'trigger': 'finished', 'source': ['augment', 'augment_holding', 'augment_releasing'], 'dest': 'inactive'},
         {'trigger': 'shed_load', 'source': 'augment', 'dest': 'augment_release'},
@@ -504,7 +504,7 @@ class ILCAgent(Agent):
                     _log.debug("Resetting curtail count")
                     self.curtailment_container.reset_curtail_count()
 
-            if len(self.bldg_power) < 15:
+            if len(self.bldg_power) < 10:
                 return
             self.check_load(average_power, current_time)
             return
@@ -612,6 +612,12 @@ class ILCAgent(Agent):
             # self.curtail(scored_devices, bldg_power, current_time)
         #self.create_application_status(format_timestamp(current_time), result)
 
+    def confirm_elapsed(self):
+        if self.current_time > self.next_confirm:
+            return True
+        else:
+            return False
+
     def augmenting_load(self):
         _log.debug("AUGMENT")
         scored_devices = self.criteria_container.get_score_order()
@@ -622,7 +628,7 @@ class ILCAgent(Agent):
         _log.debug("Scored and on devices: {}".format(score_order))
 
         if not score_order:
-            _log.info("All devices are off, nothing to curtail.")
+            _log.info("All devices are on, nothing to augment.")
             return
 
         self.device_group_size = None
@@ -651,9 +657,9 @@ class ILCAgent(Agent):
             return
 
         self.break_end = self.current_time + self.curtail_time + self.curtail_break
-        self.curtail_end = self.current_time + self.curtail_time
+        self.end_time = self.current_time + self.curtail_time
         self.reset_curtail_count = self.curtail_end + self.reset_curtail_count_time
-        self.next_curtail_confirm = self.current_time + self.curtail_confirm
+        self.next_confirm = self.current_time + self.curtail_confirm
 
         for device in remaining_devices:
             device_name, device_id, actuator = device
@@ -888,7 +894,7 @@ class ILCAgent(Agent):
                 _log.info("Curtail goal for building load NOT met.")
                 self.check_load(cur_pwr, now)
 
-    def end_curtail(self, current_time):
+    def end_curtail(self):
         _log.info("Stagger release: {}".format(self.stagger_release))
 
         if self.stagger_release:
@@ -896,18 +902,18 @@ class ILCAgent(Agent):
 
             if self.device_group_size is None:
                 _log.debug("Run stagger release setup.")
-                self.next_curtail_confirm = current_time + self.curtail_confirm
+                self.next_confirm = self.current_time + self.curtail_confirm
                 self.stagger_release_setup()
-                self.next_release = current_time + td(minutes=self.current_stagger.pop(0))
+                self.next_release = self.current_time + td(minutes=self.current_stagger.pop(0))
                 self.reset_devices()
 
-            if current_time >= self.next_release and self.current_stagger:
+            if self.current_time >= self.next_release and self.current_stagger:
                 _log.debug("Release group stagger.")
                 self.reset_devices()
-                self.next_release = current_time + td(minutes=self.current_stagger.pop(0))
+                self.next_release = self.current_time + td(minutes=self.current_stagger.pop(0))
                 _log.debug("Next scheduled release: {}".format(self.next_release))
 
-            if current_time >= self.break_end:
+            if self.current_time >= self.break_end:
                 _log.debug("Release all in contingency.")
                 self.reinitialize_stagger()
             return
