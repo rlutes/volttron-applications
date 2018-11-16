@@ -73,30 +73,30 @@ setup_logging()
 _log = logging.getLogger(__name__)
 
 
-class CurtailmentCluster(object):
+class ControlCluster(object):
     def __init__(self, cluster_config, actuator):
         self.devices = {}
         self.device_topics = set()
         for device_name, device_config in cluster_config.items():
-            curtailment_manager = CurtailmentManager(device_config)
-            self.devices[device_name, actuator] = curtailment_manager
-            self.device_topics |= curtailment_manager.device_topics
+            control_manager = ControlManager(device_config)
+            self.devices[device_name, actuator] = control_manager
+            self.device_topics |= control_manager.device_topics
 
-    def get_all_on_devices(self):
+    def get_all_devices_status(self, state):
         results = []
         for device_info, device in self.devices.items():
-            for device_id in device.get_on_commands():
+            for device_id in device.get_device_status(state):
                 results.append((device_info[0], device_id, device_info[1]))
         return results
 
 
-class CurtailmentContainer(object):
+class ControlContainer(object):
     def __init__(self):
         self.clusters = []
         self.devices = {}
         self.device_topics = set()
 
-    def add_curtailment_cluster(self, cluster):
+    def add_control_cluster(self, cluster):
         self.clusters.append(cluster)
         self.devices.update(cluster.devices)
         self.device_topics |= cluster.device_topics
@@ -119,10 +119,10 @@ class CurtailmentContainer(object):
             for device_id in self.command_status:
                 device.reset_currently_curtailed(device_id)
 
-    def get_on_devices(self):
+    def get_devices_status(self, state):
         all_on_devices = []
         for cluster in self.clusters:
-            on_device = cluster.get_all_on_devices()
+            on_device = cluster.get_all_devices_status(state)
             all_on_devices.extend(on_device)
         return all_on_devices
 
@@ -164,7 +164,7 @@ class DeviceStatus(object):
         except TypeError:
             self.command_status = False
 
-class Curtailment(object):
+class Controls(object):
     def __init__(self, curtail_config, default_device=""):
         self.device_topics = set()
 
@@ -172,14 +172,25 @@ class Curtailment(object):
         self.device_topics.add(device_topic)
 
         self.conditional_curtailments = []
+
         curtailment_settings = curtail_config.pop('curtail_settings', [])
         if isinstance(curtailment_settings, dict):
             curtailment_settings = [curtailment_settings]
 
         for settings in curtailment_settings:
-            conditional_curtailment = CurtailmentSetting(default_device=device_topic, **settings)
+            conditional_curtailment = ControlSetting(default_device=device_topic, **settings)
             self.device_topics |= conditional_curtailment.device_topics
             self.conditional_curtailments.append(conditional_curtailment)
+
+        self.conditional_augments = []
+        augment_settings = curtail_config.pop('augment_settings', [])
+        if isinstance(augment_settings, dict):
+            augment_settings = [augment_settings]
+
+        for settings in augment_settings:
+            conditional_augment = ControlSetting(default_device=device_topic, **settings)
+            self.device_topics |= conditional_augment.device_topics
+            self.conditional_augments.append(conditional_augment)
 
         self.device_status = DeviceStatus(default_device=device_topic, **curtail_config.pop('device_status', {}))
         self.device_topics |= self.device_status.device_topics
@@ -189,26 +200,30 @@ class Curtailment(object):
     def ingest_data(self, data):
         for conditional_curtailment in self.conditional_curtailments:
             conditional_curtailment.ingest_data(data)
+        for conditional_augment in self.conditional_augments:
+            conditional_augment.ingest_data(data)
         self.device_status.ingest_data(data)
 
-    def get_curtailment(self):
-        for conditional_curtailment in self.conditional_curtailments:
-            if conditional_curtailment.check_condition():
-                return conditional_curtailment.get_curtailment()
+    def get_control_info(self, state):
+        settings = self.conditional_curtailments if state == 'shed' else self.conditional_augments
+        for setting in settings:
+            if setting.check_condition():
+                return setting.get_control_info()
 
         return None
 
-    def get_point_device(self):
-        for conditional_curtailment in self.conditional_curtailments:
-            if conditional_curtailment.check_condition():
-                return conditional_curtailment.get_point_device()
+    def get_point_device(self, state):
+        settings = self.conditional_curtailments if state == 'shed' else self.conditional_augments
+        for setting in settings:
+            if setting.check_condition():
+                return setting.get_point_device()
 
         return None
 
     def reset_curtail_count(self):
         self.curtail_count = 0.0
 
-    def increment_curtail(self):
+    def increment_control(self):
         self.currently_curtailed = True
         self.curtail_count += 1.0
 
@@ -216,53 +231,56 @@ class Curtailment(object):
         self.currently_curtailed = False
 
 
-class CurtailmentManager(object):
+class ControlManager(object):
     def __init__(self, device_config, default_device=""):
         self.device_topics = set()
-        self.curtailments = {}
+        self.controls = {}
 
         for device_id, curtail_config in device_config.items():
-            curtailments = Curtailment(curtail_config, default_device)
-            self.curtailments[device_id] = curtailments
-            self.device_topics |= curtailments.device_topics
+            controls = Controls(curtail_config, default_device)
+            self.controls[device_id] = controls
+            self.device_topics |= controls.device_topics
 
     def ingest_data(self, data):
-        for curtailment in self.curtailments.itervalues():
-            curtailment.ingest_data(data)
+        for control in self.controls.itervalues():
+            control.ingest_data(data)
 
-    def get_curtailment(self, device_id):
-        return self.curtailments[device_id].get_curtailment()
+    def get_control_info(self, device_id, state):
+        return self.controls[device_id].get_control_info(state)
 
-    def get_point_device(self, device_id):
-        return self.curtailments[device_id].get_point_device()
+    def get_point_device(self, device_id, state):
+        return self.controls[device_id].get_point_device(state)
 
     def reset_curtail_count(self):
-        for curtailment in self.curtailments.itervalues():
-            curtailment.reset_curtail_count()
+        for control in self.controls.itervalues():
+            control.reset_curtail_count()
 
-    def increment_curtail(self, device_id):
-        self.curtailments[device_id].increment_curtail()
+    def increment_control(self, device_id):
+        self.controls[device_id].increment_control()
 
     def reset_curtail_status(self, device_id):
-        self.curtailments[device_id].reset_curtail_status()
+        self.controls[device_id].reset_curtail_status()
 
-    def get_on_commands(self):
-        return [command for command, curtailment in self.curtailments.iteritems() if curtailment.device_status.command_status]
+    def get_device_status(self, state):
+        if state == 'shed':
+            return [command for command, control in self.controls.iteritems() if control.device_status.command_status]
+        else:
+            return [command for command, control in self.controls.iteritems() if not control.device_status.command_status]
 
 
-class CurtailmentSetting(object):
+class ControlSetting(object):
     def __init__(self, point=None, value=None, load=None, offset=None, maximum=None, minimum=None,
-                 revert_priority=None, equation=None, curtailment_method=None,
+                 revert_priority=None, equation=None, control_method=None,
                  condition="", conditional_args=[], default_device=""):
-        if curtailment_method is None:
-            raise ValueError("Missing 'curtailment_method' configuration parameter!")
+        if control_method is None:
+            raise ValueError("Missing 'control_method' configuration parameter!")
         if point is None:
-            raise ValueError("Missing device curtailment 'point' configuration parameter!")
+            raise ValueError("Missing device control 'point' configuration parameter!")
         if load is None:
             raise ValueError("Missing device 'load' estimation configuration parameter!")
 
         self.point, self.point_device = fix_up_point_name(point, default_device)
-        self.curtailment_method = curtailment_method
+        self.control_method = control_method
         self.value = value
 
         self.offset = offset
@@ -270,14 +288,31 @@ class CurtailmentSetting(object):
         self.maximum = maximum
         self.minimum = minimum
 
-        if self.curtailment_method.lower() == 'equation':
-            self.equation_args = parse_sympy(equation['equation_args'])
-            self.curtail_value_formula = parse_expr(parse_sympy(equation['operation']))
+        if self.control_method.lower() == 'equation':
+            self.equation_args = []
+            equation_args = parse_sympy(equation['equation_args'])
+            for arg in equation_args:
+                point, point_device = fix_up_point_name(arg, default_device)
+                if isinstance(arg, list):
+                    token = arg[0]
+                else:
+                    token = arg
+                self.equation_args.append([token, point])
+
+            self.control_value_formula = parse_expr(parse_sympy(equation['operation']))
             self.maximum = equation['maximum']
             self.minimum = equation['minimum']
 
         if isinstance(load, dict):
-            load_args = parse_sympy(load['equation_args'])
+            args = parse_sympy(load['equation_args'])
+            load_args = []
+            for arg in args:
+                point, point_device = fix_up_point_name(arg, default_device)
+                if isinstance(arg, list):
+                    token = arg[0]
+                else:
+                    token = arg
+                load_args.append([token, point])
             actuator_args = load['equation_args']
             self.load_points = symbols(load_args)
             load_expr = parse_expr(parse_sympy(load['operation']))
@@ -307,35 +342,35 @@ class CurtailmentSetting(object):
     def get_point_device(self):
         return self.point_device
 
-    def get_curtailment(self):
-        if self.curtailment_method.lower() == 'equation':
+    def get_control_info(self):
+        if self.control_method.lower() == 'equation':
             return {
                 'point': self.point,
                 'load': self.load,
                 'revert_priority': self.revert_priority,
-                'curtail_equation': self.curtail_value_formula,
-                'curtail_equation_args': self.equation_args,
-                'curtailment_method': self.curtailment_method,
+                'control_equation': self.control_value_formula,
+                'equation_args': self.equation_args,
+                'control_method': self.control_method,
                 'maximum': self.maximum,
                 'minimum': self.minimum
             }
-        elif self.curtailment_method.lower() == 'offset':
+        elif self.control_method.lower() == 'offset':
             return {
                 'point': self.point,
                 'load': self.load,
                 'offset': self.offset,
                 'revert_priority': self.revert_priority,
-                'curtailment_method': self.curtailment_method,
+                'control_method': self.control_method,
                 'maximum': self.maximum,
                 'minimum': self.minimum
             }
-        elif self.curtailment_method.lower() == 'value':
+        elif self.control_method.lower() == 'value':
             return {
                 'point': self.point,
                 'load': self.load,
                 'value': self.value,
                 'revert_priority': self.revert_priority,
-                'curtailment_method': self.curtailment_method,
+                'control_method': self.control_method,
                 'maximum': self.maximum,
                 'minimum': self.minimum
             }

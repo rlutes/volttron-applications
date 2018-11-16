@@ -173,13 +173,15 @@ def validate_input(pairwise_matrix, col_sums):
     priority_row_sum = sum(priority_row)
 
     # Calculate the consistency index
+    ncols = max(len(col_sums) - 1, 1)
     consistency_index = \
-        (priority_row_sum - len(col_sums))/(len(col_sums) - 1)
+        (priority_row_sum - len(col_sums))/ncols
 
     # Calculate the consistency ratio
-    consistency_ratio = consistency_index / random_index[len(col_sums)]
+    rindex = max(random_index[len(col_sums)], 0.3)
+    consistency_ratio = consistency_index / rindex
 
-    return consistency_ratio < 0.5
+    return consistency_ratio < 0.25
 
 
 def build_score(_matrix, weight, priority):
