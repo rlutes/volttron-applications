@@ -592,7 +592,7 @@ class EconomizerAgent(Agent):
 
         for diagnostic in constants.DX_LIST:
             _log.info(constants.table_log_format(self.analysis_name, cur_time, (diagnostic + constants.DX + ":" + str(dx_msg))))
-            self.results_publish.append(constants.table_publish_format(self.analysis_name, cur_time, (diagnostic + constants.DX), str(dx_msg)))
+            self.results_publish.append(constants.table_publish_format(self.analysis_name, cur_time, (diagnostic + constants.DX), dx_msg))
 
     def sensor_limit_check(self, current_time):
         """ Check temperature limits on sensors.
